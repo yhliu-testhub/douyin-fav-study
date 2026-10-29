@@ -201,6 +201,59 @@ details summary { cursor: pointer; color: var(--link); }
 .mynote textarea:focus { box-shadow: 0 0 0 4px rgba(0, 113, 227, .18), 0 0 0 1px var(--accent); }
 .saved { font-size: 12px; color: var(--ink-3); }
 
+/* ------------------------------------------------ 详情页新布局（无侧栏，满宽） */
+.note.wide { max-width: none; }
+.head-row { display: flex; align-items: flex-start; gap: 16px; }
+.head-row h1 { flex: 1; min-width: 0; }
+.head-actions { display: flex; gap: 8px; flex-shrink: 0; padding-top: 10px; }
+.src-row { margin: -2px 0 14px; }
+.src-link { color: var(--link); font-size: 13.5px; text-decoration: none; word-break: break-all;
+  display: inline-flex; align-items: center; gap: 5px; }
+.src-link:hover { text-decoration: underline; }
+.act-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 4px; }
+.tabs-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  border-bottom: 1px solid var(--line); margin-top: 24px; }
+.tabs-row .itabs { border-bottom: 0; margin-top: 0; }
+.cat-pick { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--ink-3); }
+.cat-pick select { padding: 5px 8px; border-radius: 8px; border: 1px solid var(--line);
+  background: var(--card); color: var(--ink); font-size: 13px; }
+.foot-actions { display: flex; align-items: center; gap: 8px; margin-top: 42px;
+  padding-top: 18px; border-top: 1px solid var(--line); }
+
+/* ------------------------------------------------ 逐字稿 / 总结稿 */
+.blk { margin: 30px 0; }
+.blk-head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+.blk-head h2 { font-size: 20px; margin: 0; }
+.one-line { font-size: 18px; line-height: 1.75; font-weight: 500;
+  background: var(--card); padding: 16px 20px; border-radius: 14px; margin: 0; }
+.article-body { font-size: 16px; line-height: 1.95; color: var(--ink-2); }
+.article-body p { text-indent: 2em; margin: 0 0 1em; }
+.article-body b { color: var(--ink); font-weight: 600; }
+.article-body i { color: var(--ink-3); font-style: italic; }
+.article-body mark { background: #fff2b2; color: inherit; padding: 1px 3px; border-radius: 3px; }
+@media (prefers-color-scheme: dark) { .article-body mark { background: #5a4b12; color: #fff; } }
+.article-body ul, .article-body ol { text-indent: 0; padding-left: 1.7em; margin: 0 0 1em; }
+.article-body li { text-indent: 0; line-height: 1.85; }
+.cp-btn { flex-shrink: 0; }
+
+/* ------------------------------------------------ 详细列表视图 */
+.dtable { width: 100%; border-collapse: collapse; font-size: 14px; background: var(--card);
+  border-radius: var(--r-card); overflow: hidden; }
+.dtable th { text-align: left; padding: 11px 14px; font-weight: 500; color: var(--ink-3);
+  font-size: 13px; border-bottom: 1px solid var(--line); white-space: nowrap; cursor: pointer; user-select: none; }
+.dtable th:hover { color: var(--ink); }
+.dtable th.on { color: var(--accent); }
+.dtable td { padding: 12px 14px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+.dtable tr:last-child td { border-bottom: 0; }
+.dtable tbody tr:hover { background: rgba(0, 0, 0, .022); }
+@media (prefers-color-scheme: dark) { .dtable tbody tr:hover { background: rgba(255, 255, 255, .04); } }
+.dtable .c-title { max-width: 440px; }
+.dtable .c-title a { color: var(--ink); text-decoration: none; }
+.dtable .c-title a:hover { color: var(--link); }
+.dtable .c-date, .dtable .c-dur { white-space: nowrap; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.dtable .mini { color: var(--link); font-size: 13px; text-decoration: none; }
+.dtable .mini:hover { text-decoration: underline; }
+
 /* ---------------------------------------------------------------- 表单（通用） */
 .panels { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px; }
 .panels .card h2 { margin-bottom: 6px; }

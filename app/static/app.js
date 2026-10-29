@@ -55,7 +55,7 @@ const STATUS = {
 const ACTIVE = ["queued", "fetching", "downloading", "transcribing", "extracting"];
 
 let STATE = null;
-let libFilter = { q: "", learned: "", starred: "", category: "" };
+let libFilter = { q: "", learned: "", starred: "", category: "", view: "card", sort: "date", desc: true };
 let procTab = "active";
 let lastItems = [];
 
@@ -75,6 +75,14 @@ function toast(msg, ms = 2600) {
 
 const fmtDur = (s) => { s = Math.round(s || 0); return s ? `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}` : ""; };
 const fmtTime = (t) => new Date(t * 1000).toLocaleTimeString("zh-CN", { hour12: false });
+const fmtDate = (t) => (t ? new Date(t * 1000).toLocaleDateString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit" }) : "");
+const prettyUrl = (u) => {
+  try {
+    const x = new URL(u);
+    const p = x.pathname.replace(/\/$/, "");
+    return (x.hostname.replace(/^www\./, "") + p).slice(0, 46);
+  } catch { return u || ""; }
+};
 
 /* ---------------------------------------------------------------- 状态轮询 */
 async function refreshState() {
@@ -160,25 +168,25 @@ function depsBanner() {
 function bannerHtml() {
   const dep = depsBanner(); if (dep) return dep;
   const s = STATE.settings;
-  if (!s.api_key_set) return `<div class="banner info"><div><b>还没配置 AI。</b> 没有它只能把视频转成文字，生成不了学习笔记。
+  if (!s.api_key_set) return `<div class="banner info"><div><b>还没配置 AI。</b> 没有它只能把视频转成文字，生成不了笔记。
     用「免费方案」两分钟就能配好，不花钱。</div><span class="spacer"></span><a class="btn sm primary" href="#/settings">去配置 →</a></div>`;
   return "";
 }
 
 async function renderLibrary(soft = false) {
-  const st = STATE.stats;
-  const doneN = st.by_status.done || 0;
-  const pct = doneN ? Math.round((st.learned / doneN) * 100) : 0;
   const params = new URLSearchParams({ status: "done" });
   if (libFilter.q) params.set("q", libFilter.q);
-  if (libFilter.learned) params.set("learned", libFilter.learned);
   if (libFilter.starred) params.set("starred", "1");
   if (libFilter.category) params.set("category", libFilter.category);
   if (!soft && !$("#libGrid")) view.innerHTML = skeletonLibrary();
-  const items = await api("/api/items?" + params);
+  const items = sortItems(await api("/api/items?" + params));
   lastItems = items;
 
-  if (soft && $("#libGrid")) { $("#libGrid").innerHTML = gridHtml(items); updateProgress(st, doneN, pct); return; }
+  if (soft && $("#libGrid")) {
+    const g = $("#libGrid");
+    g.className = libFilter.view === "list" ? "" : "grid";
+    g.innerHTML = bodyHtml(items); bindLibrary(); return;
+  }
 
   view.innerHTML = `
     ${bannerHtml()}
@@ -186,43 +194,87 @@ async function renderLibrary(soft = false) {
       <div><h1>${libFilter.category ? `<i class="dot big-dot cat-${catColor(libFilter.category)}"></i>${esc(libFilter.category)}` : "收藏库"}</h1>
       ${libFilter.category ? `<div class="muted"><a href="#/library">← 全部分类</a></div>` : ""}</div>
       <div class="spacer"></div>
-      <button class="btn" id="randBtn" title="随机抽一条还没学的">${ico("shuffle")}随机学一条</button>
+      <button class="btn" id="randBtn" title="随机打开一条">${ico("shuffle")}随机看一条</button>
       <button class="btn primary" id="addBtn">${ico("plus")}添加</button>
     </div>
-    <div class="card progress-card" id="progCard"></div>
     <div class="toolbar">
-      <input class="search" id="q" placeholder="搜索标题、观点、文字稿、我的笔记…" value="${esc(libFilter.q)}">
-      <div class="seg" id="segLearned">
-        <button data-v="" class="${libFilter.learned === "" && !libFilter.starred ? "on" : ""}">全部</button>
-        <button data-v="0" class="${libFilter.learned === "0" ? "on" : ""}">待学</button>
-        <button data-v="1" class="${libFilter.learned === "1" ? "on" : ""}">已学</button>
+      <input class="search" id="q" placeholder="搜索标题、观点、逐字稿、作者…" value="${esc(libFilter.q)}">
+      <div class="seg" id="segFilter">
+        <button data-v="all" class="${libFilter.starred ? "" : "on"}">全部</button>
         <button data-v="star" class="${libFilter.starred ? "on" : ""}">${ico("star", "ic sm")}星标</button>
       </div>
+      <div class="seg" id="segView">
+        <button data-v="card" class="${libFilter.view === "card" ? "on" : ""}">卡片</button>
+        <button data-v="list" class="${libFilter.view === "list" ? "on" : ""}">详细</button>
+      </div>
     </div>
-    <div class="grid" id="libGrid">${gridHtml(items)}</div>`;
-  updateProgress(st, doneN, pct);
+    <div id="libGrid" class="${libFilter.view === "list" ? "" : "grid"}">${bodyHtml(items)}</div>`;
+  bindLibrary();
+}
 
-  let t; $("#q").addEventListener("input", (e) => { clearTimeout(t); t = setTimeout(() => { libFilter.q = e.target.value.trim(); renderLibrary(true); }, 250); });
-  $$("#segLearned button").forEach((b) => b.onclick = () => {
-    const v = b.dataset.v; libFilter.starred = v === "star" ? "1" : ""; libFilter.learned = v === "star" ? "" : v;
-    $$("#segLearned button").forEach((x) => x.classList.toggle("on", x === b)); renderLibrary(true);
+function bindLibrary() {
+  let t;
+  const q = $("#q");
+  if (q) q.oninput = (e) => { clearTimeout(t); t = setTimeout(() => { libFilter.q = e.target.value.trim(); renderLibrary(true); }, 250); };
+  $$("#segFilter button").forEach((b) => b.onclick = () => {
+    libFilter.starred = b.dataset.v === "star" ? "1" : "";
+    $$("#segFilter button").forEach((x) => x.classList.toggle("on", x === b));
+    renderLibrary(true);
   });
-  $("#addBtn").onclick = openAdd;
-  $("#randBtn").onclick = async () => {
-    const todo = await api("/api/items?status=done&learned=0");
-    if (!todo.length) return toast("全部学完啦 🎉");
-    location.hash = "#/item/" + todo[Math.floor(Math.random() * todo.length)].id;
+  $$("#segView button").forEach((b) => b.onclick = () => {
+    libFilter.view = b.dataset.v;
+    $$("#segView button").forEach((x) => x.classList.toggle("on", x === b));
+    renderLibrary(true);
+  });
+  $$("#libGrid th[data-sort]").forEach((th) => th.onclick = () => {
+    const k = th.dataset.sort;
+    if (libFilter.sort === k) libFilter.desc = !libFilter.desc;
+    else { libFilter.sort = k; libFilter.desc = k === "date" || k === "duration"; }
+    renderLibrary(true);
+  });
+  const add = $("#addBtn"); if (add) add.onclick = openAdd;
+  const rand = $("#randBtn");
+  if (rand) rand.onclick = async () => {
+    const all = await api("/api/items?status=done");
+    if (!all.length) return toast("收藏库还是空的");
+    location.hash = "#/item/" + all[Math.floor(Math.random() * all.length)].id;
   };
 }
 
-function updateProgress(st, doneN, pct) {
-  const el = $("#progCard"); if (!el) return;
-  const pending = ACTIVE.reduce((n, k) => n + (st.by_status[k] || 0), 0);
-  el.innerHTML = `
-    <div class="big">${st.learned}<span class="muted" style="font-size:18px"> / ${doneN}</span></div>
-    <div><div class="row small"><b>学习进度 ${pct}%</b><span class="spacer"></span>
-      <span class="muted">${pending ? `还有 ${pending} 条在处理 · ` : ""}${st.starred ? `${ico("starFill", "ic sm star-ic")} ${st.starred} · ` : ""}共收录 ${doneN} 条笔记</span></div>
-      <div class="bar" style="margin-top:8px"><i style="width:${pct}%"></i></div></div>`;
+function sortItems(items) {
+  const k = libFilter.sort, dir = libFilter.desc ? -1 : 1;
+  const val = (it) => {
+    if (k === "title") return (it.note_title || it.title || "").toLowerCase();
+    if (k === "author") return (it.author || "").toLowerCase();
+    if (k === "category") return it.category || "";
+    if (k === "duration") return it.duration || 0;
+    return it.created_at || 0;
+  };
+  return [...items].sort((a, b) => {
+    const x = val(a), y = val(b);
+    if (typeof x === "number" && typeof y === "number") return (x - y) * dir;
+    return String(x).localeCompare(String(y), "zh") * dir;
+  });
+}
+
+const bodyHtml = (items) => (libFilter.view === "list" ? detailHtml(items) : gridHtml(items));
+
+function detailHtml(items) {
+  if (!items.length) return gridHtml(items);
+  const cols = [["title", "标题"], ["author", "作者"], ["category", "分类"], ["date", "收藏日期"], ["duration", "时长"]];
+  const mark = (k) => (libFilter.sort === k ? (libFilter.desc ? " ↓" : " ↑") : "");
+  return `<table class="dtable"><thead><tr>
+    ${cols.map(([k, l]) => `<th data-sort="${k}" class="${libFilter.sort === k ? "on" : ""}">${l}${mark(k)}</th>`).join("")}
+    <th>链接</th></tr></thead><tbody>
+    ${items.map((it) => `<tr>
+      <td class="c-title"><a href="#/item/${it.id}">${it.starred ? ico("starFill", "ic sm star-ic") : ""}${esc(it.note_title || it.title || "未命名")}</a></td>
+      <td>${esc(it.author || "")}</td>
+      <td>${catChip(it.category)}</td>
+      <td class="c-date">${fmtDate(it.created_at)}</td>
+      <td class="c-dur">${fmtDur(it.duration)}</td>
+      <td>${it.url ? `<a class="mini" href="${esc(it.url)}" target="_blank" rel="noopener">${it.source === "local" ? "本地" : "打开"}</a>` : ""}</td>
+    </tr>`).join("")}
+  </tbody></table>`;
 }
 
 function gridHtml(items) {
@@ -238,7 +290,6 @@ function gridHtml(items) {
     <a class="vcard" href="#/item/${it.id}" style="--i:${Math.min(i, 14)}">
       <div class="cover">${it.cover ? `<img src="${esc(it.cover)}" referrerpolicy="no-referrer" loading="lazy" onerror="this.remove()">` : ""}
         <div class="ph cat-${catColor(it.category)}" ${it.cover ? 'style="z-index:-1"' : ""}>${ico(it.media_type === "note" ? "file" : "play", "ic ph-ic")}</div>
-        ${it.learned ? `<span class="learned-tag">${ico("check", "ic sm")}已学</span>` : ""}
         ${it.duration ? `<span class="dur">${fmtDur(it.duration)}</span>` : ""}</div>
       <div class="body">
         <div class="t">${it.starred ? ico("starFill", "ic star-ic") : ""}${esc(it.note_title || it.title)}</div>
@@ -297,57 +348,61 @@ async function renderItem(id, tab) {
   if (curItem?.id !== id) view.innerHTML = skeletonItem();
   try { it = await api(`/api/items/${id}`); } catch (e) { view.innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
   if (tab) itemTab = tab;
-  if (curItem?.id !== id && !tab) { itemTab = "note"; quizState = {}; }
-  if (it.source === "paste" && itemTab === "note" && !tab && curItem?.id !== id) itemTab = "deep";
+  if (curItem?.id !== id && !tab) { itemTab = "script"; quizState = {}; }
+  if (it.source === "paste" && itemTab === "script" && !tab && curItem?.id !== id) itemTab = "deep";
   curItem = it;
   const n = it.note || {};
   const cats = [...new Set([...(STATE.settings.categories || []), ...(STATE.stats.categories || []).map((c) => c.category)].filter(Boolean))];
   const [stText, stCls] = STATUS[it.status] || [it.status, "gray"];
   const isNote = it.media_type === "note";
-  const tabs = [["note", "笔记"], ["deep", "带我精读" + (it.deep ? " ✓" : "")], ["text", isNote ? "原图与文字" : "文字稿"]];
+  const tabs = [["script", "逐字稿"], ["summary", "总结稿"], ["mindmap", "思维导图"], ["deep", "精读" + (it.deep ? " ✓" : "")]];
+  const srcLink = it.url
+    ? `<a class="src-link" href="${esc(it.url)}" target="_blank" rel="noopener">${ico("external", "ic sm")}${esc(prettyUrl(it.url))}</a>`
+    : (it.local_path ? `<span class="src-link">${ico("folder", "ic sm")}本地：${esc(it.local_path)}</span>` : "");
   view.innerHTML = `
     <a class="back" href="javascript:history.length>1?history.back():location.hash='#/library'">← 返回</a>
-    <div class="detail">
-      <article class="note">
+    <article class="note wide">
+      <div class="head-row">
         <h1>${esc(n.title || (it.deep || {}).title || it.title || "未命名")}</h1>
-        <div class="meta">
-          ${it.status !== "done" ? `<span class="chip ${stCls}">${stText}</span>` : ""}
-          ${catChip(n.category || "未分类")}
-          ${n.difficulty ? `<span class="chip gray">${esc(n.difficulty)}</span>` : ""}
-          ${(n.tags || []).map((t) => `<span class="muted">#${esc(t)}</span>`).join(" ")}
+        <div class="head-actions">
+          ${it.url ? `<a class="btn sm" href="${esc(it.url)}" target="_blank" rel="noopener">${isNote ? ico("external") + "原图文" : ico("play") + "原视频"}</a>` : ""}
+          <button class="btn sm" id="starBtn">${it.starred ? ico("starFill", "ic star-ic") + "已星标" : ico("star") + "星标"}</button>
         </div>
-        ${it.title && it.title !== n.title && it.source !== "paste" ? `<div class="muted small" style="margin-top:-8px">原标题：${esc(it.title)}</div>` : ""}
-        ${it.reason ? `<div class="banner warn" style="margin-top:14px">${esc(it.reason)}</div>` : ""}
+      </div>
+      ${srcLink ? `<div class="src-row">${srcLink}</div>` : ""}
+      <div class="meta">
+        ${it.status !== "done" ? `<span class="chip ${stCls}">${stText}</span>` : ""}
+        ${n.difficulty ? `<span class="chip gray">${esc(n.difficulty)}</span>` : ""}
+        <span class="muted">${esc(it.author || "未知作者")}${it.duration ? " · " + fmtDur(it.duration) : ""}${it.created_at ? " · 收藏于 " + fmtDate(it.created_at) : ""}</span>
+        ${(n.tags || []).map((t) => `<span class="muted">#${esc(t)}</span>`).join(" ")}
+      </div>
+      ${it.title && it.title !== n.title && it.source !== "paste" ? `<div class="muted small">原标题：${esc(it.title)}</div>` : ""}
+      <div class="act-row">
+        <button class="btn sm" id="pdfBtn">${ico("file")}导出 PDF</button>
+        <a class="btn sm" href="/api/items/${it.id}/md">${ico("download")}下载 MD</a>
+        ${it.md_path ? `<button class="btn sm" id="revealBtn">${ico("folder")}在文件夹中显示</button>` : ""}
+      </div>
+      ${it.reason ? `<div class="banner warn" style="margin-top:14px">${esc(it.reason)}</div>` : ""}
+      <div class="tabs-row">
         <div class="tabs itabs" id="itabs">${tabs.map(([k, l]) => `<button data-t="${k}" class="${itemTab === k ? "on" : ""}">${l}</button>`).join("")}</div>
-        <div id="tabBody"></div>
-      </article>
-      <aside class="aside">
-        ${it.source === "paste" ? "" : `<div class="cover-lg">${it.cover ? `<img src="${esc(it.cover)}" referrerpolicy="no-referrer" onerror="this.remove()">` : ""}</div>`}
-        <div class="small muted">${esc(it.author || "")}${it.duration ? " · " + fmtDur(it.duration) : ""}${it.source === "paste" ? "粘贴的文稿" : ""}</div>
-        <div class="actions">
-          ${it.status === "done" ? `<button class="btn ${it.learned ? "" : "accent"} full" id="learnBtn">${it.learned ? ico("check") + "已学会（点击取消）" : "标记为已学会"}</button>` : ""}
-          ${it.url ? `<a class="btn" href="${esc(it.url)}" target="_blank" rel="noopener" style="text-align:center">${isNote ? ico("external") + "原图文" : ico("play") + "原视频"}</a>` : ""}
-          <button class="btn" id="starBtn">${it.starred ? ico("starFill", "ic star-ic") + "已星标" : ico("star") + "星标"}</button>
-          <button class="btn" id="pdfBtn">${ico("file")}导出 PDF</button>
-          <a class="btn" href="/api/items/${it.id}/md" style="text-align:center">${ico("download")}下载 MD</a>
-          ${it.md_path ? `<button class="btn full" id="revealBtn">${ico("folder")}在文件夹中显示笔记</button>` : ""}
-          ${it.status === "irrelevant" ? `<button class="btn accent full" id="includeBtn">我觉得有用，收进收藏库</button>` : ""}
-          ${["failed", "skipped", "need_key", "irrelevant", "done"].includes(it.status) && it.transcript && it.source !== "paste"
-            ? `<button class="btn full" id="reBtn">${ico("sparkles")}重新 AI 提炼</button>` : ""}
-          ${it.status === "failed" && !it.transcript ? `<button class="btn full" id="retryBtn">重试</button>` : ""}
-        </div>
-        ${it.status === "done" ? `<div class="field"><label>分类</label><select id="catSel">${cats.map((c) => `<option ${c === n.category ? "selected" : ""}>${esc(c)}</option>`).join("")}${cats.includes(n.category) || !n.category ? "" : `<option selected>${esc(n.category)}</option>`}</select></div>` : ""}
-        <div class="mynote"><div class="row"><b>我的笔记</b><span class="spacer"></span><span class="saved" id="saved"></span></div>
-          <textarea id="myNote" placeholder="写下自己的理解、实践结果、想法……（自动保存，也会写进 MD 笔记）">${esc(it.my_note)}</textarea></div>
-        <button class="btn ghost small" id="delBtn" style="color:var(--bad)">删除这条</button>
-      </aside>
-    </div>`;
+        <span class="spacer"></span>
+        ${it.status === "done" ? `<span class="cat-pick"><label>分类</label><select id="catSel">${cats.map((c) => `<option ${c === n.category ? "selected" : ""}>${esc(c)}</option>`).join("")}${cats.includes(n.category) || !n.category ? "" : `<option selected>${esc(n.category)}</option>`}</select></span>` : ""}
+      </div>
+      <div id="tabBody"></div>
+      <div class="foot-actions">
+        ${it.status === "irrelevant" ? `<button class="btn sm accent" id="includeBtn">我觉得有用，收进收藏库</button>` : ""}
+        ${["failed", "skipped", "need_key", "irrelevant", "done"].includes(it.status) && it.transcript && it.source !== "paste"
+          ? `<button class="btn sm" id="reBtn">${ico("sparkles")}重新 AI 提炼</button>` : ""}
+        ${it.status === "failed" && !it.transcript ? `<button class="btn sm" id="retryBtn">重试</button>` : ""}
+        <span class="spacer"></span>
+        <button class="btn sm ghost" id="delBtn" style="color:var(--bad)">删除这条</button>
+      </div>
+    </article>`;
 
   $$("#itabs button").forEach((b) => b.onclick = () => { itemTab = b.dataset.t; $$("#itabs button").forEach((x) => x.classList.toggle("on", x === b)); renderTab(); });
   renderTab();
 
   const act = (action, extra = {}) => api(`/api/items/${id}/action`, { action, ...extra });
-  $("#learnBtn") && ($("#learnBtn").onclick = async () => { await act("learned", { value: !it.learned }); toast(it.learned ? "已取消" : "太棒了，又学会一条 🎉"); refreshState(); renderItem(id, itemTab); });
   $("#starBtn").onclick = async () => { await act("star", { value: !it.starred }); renderItem(id, itemTab); };
   $("#pdfBtn").onclick = () => window.open(`/print?ids=${id}`, "_blank");
   $("#revealBtn") && ($("#revealBtn").onclick = () => api("/api/open", { what: "item", id }).catch((e) => toast(e.message)));
@@ -359,26 +414,120 @@ async function renderItem(id, tab) {
     if (!confirm("确定删除这条？对应的 MD 笔记文件也会删除。")) return;
     await act("delete"); toast("已删除"); location.hash = "#/library";
   };
-  let t; $("#myNote").addEventListener("input", (e) => {
-    $("#saved").textContent = "编辑中…"; clearTimeout(t);
-    t = setTimeout(async () => { await act("note", { text: e.target.value }); $("#saved").textContent = "已保存"; }, 800);
-  });
 }
 
 function renderTab() {
   const it = curItem, el = $("#tabBody");
   if (!el) return;
   el.classList.remove("fade-in"); void el.offsetWidth; el.classList.add("fade-in");
-  if (itemTab === "note") {
-    el.innerHTML = (it.images?.length ? galleryHtml(it.images) : "") +
-      (it.note ? noteBody(it) : `<div class="empty" style="padding:30px">这条还没有笔记。${it.transcript ? "可以直接去「带我精读」。" : ""}</div>`);
-    bindGallery(el, it.images);
-    $$("[data-reveal]", el).forEach((b) => b.onclick = () => { b.closest(".q").classList.add("open"); b.remove(); });
-  } else if (itemTab === "text") {
-    renderTextTab(el);
+  if (itemTab === "script") renderScriptTab(el);
+  else if (itemTab === "summary") renderSummaryTab(el);
+  else if (itemTab === "mindmap") renderMindmapTab(el);
+  else renderDeepTab(el);
+}
+
+const mdInline = (t) => esc(t)
+  .replace(/&lt;mark&gt;([\s\S]+?)&lt;\/mark&gt;/g, "<mark>$1</mark>")
+  .replace(/\*\*([\s\S]+?)\*\*/g, "<b>$1</b>")
+  .replace(/(^|[^*])\*([^*\n]+?)\*/g, "$1<i>$2</i>");
+
+function mdArticle(t) {
+  const raw = (t || "").replace(/\r/g, "");
+  return raw.split(/\n{2,}/)
+    .map((p) => p.replace(/^[\s　]+|[\s　]+$/g, ""))
+    .filter(Boolean)
+    .map((p) => `<p>${mdInline(p).replace(/\n/g, "<br>")}</p>`)
+    .join("");
+}
+
+function splitParagraphs(text, segs) {
+  const out = [];
+  if (segs && segs.length) {
+    let buf = [], chars = 0, last = null;
+    segs.forEach((s) => {
+      if (last !== null && (s.start - last > 2.5 || chars > 140)) { out.push(buf.join("")); buf = []; chars = 0; }
+      buf.push(s.text); chars += (s.text || "").length; last = s.end;
+    });
+    if (buf.length) out.push(buf.join(""));
   } else {
-    renderDeepTab(el);
+    const sentences = (text || "").match(/[^。！？!?\n]+[。！？!?]?/g) || [text || ""];
+    let buf = [], chars = 0;
+    sentences.forEach((s) => {
+      buf.push(s); chars += s.length;
+      if (chars > 140) { out.push(buf.join("")); buf = []; chars = 0; }
+    });
+    if (buf.length) out.push(buf.join(""));
   }
+  return out.map((p) => p.trim()).filter(Boolean);
+}
+
+function copyBtn(id, label) {
+  return `<button class="btn sm ghost cp-btn" id="${id}">${ico("copy")}${label}</button>`;
+}
+
+function renderScriptTab(el) {
+  const it = curItem, n = it.note || {};
+  if (!it.transcript) { el.innerHTML = `<div class="empty" style="padding:30px">还没有逐字稿</div>`; return; }
+  const oneLine = (n.one_line || "").trim() || (n.summary || "").split(/[。！？]/)[0] || "";
+  const paras = splitParagraphs(it.transcript, it.segments || []);
+  const body = paras.map((p) => `<p>${esc(p)}</p>`).join("");
+  el.innerHTML = `
+    ${oneLine ? `<section class="blk">
+      <div class="blk-head"><h2>一句话总结</h2><span class="spacer"></span>${copyBtn("cpOne", "复制")}</div>
+      <p class="one-line">${esc(oneLine)}</p></section>` : ""}
+    <section class="blk">
+      <div class="blk-head"><h2>逐字稿</h2><span class="muted small">${it.transcript.length} 字 · 机器转写，仅做分段</span><span class="spacer"></span>${copyBtn("cpAll", "复制逐字稿")}</div>
+      ${it.images?.length ? galleryHtml(it.images) : ""}
+      <div class="article-body">${body}</div>
+    </section>`;
+  const cpOne = $("#cpOne"); if (cpOne) cpOne.onclick = () => copyText(oneLine, "一句话总结已复制");
+  $("#cpAll").onclick = () => copyText(it.transcript, "逐字稿已复制");
+  if (it.images?.length) bindGallery(el, it.images);
+}
+
+function renderSummaryTab(el) {
+  const it = curItem, n = it.note || {}, d = it.deep || {};
+  const sumMd = (n.summary_md || "").trim();
+  const logMd = (n.logic_md || "").trim();
+  const sumFallback = (n.points || []).length
+    ? `<ul class="points">${n.points.map((p) => `<li>${esc(p)}</li>`).join("")}</ul>`
+    : (n.summary ? `<p>${esc(n.summary)}</p>` : "");
+  const logFallback = (d.outline || []).length
+    ? `<div class="outline">${d.outline.map((o) => `<div class="ol-item"><div class="ol-head">${o.time ? `<span class="ts-btn">${esc(o.time)}</span>` : ""}<b>${esc(o.title)}</b></div>${o.points?.length ? `<ul>${o.points.map((p) => `<li>${esc(p)}</li>`).join("")}</ul>` : ""}</div>`).join("")}</div>`
+    : "";
+  if (!sumMd && !logMd && !sumFallback && !logFallback) {
+    el.innerHTML = `<div class="empty" style="padding:30px">还没有总结稿。点右下角「重新 AI 提炼」可以生成。</div>`;
+    return;
+  }
+  el.innerHTML = `
+    <section class="blk">
+      <div class="blk-head"><h2>核心内容拆解</h2><span class="spacer"></span>${copyBtn("cpSum", "复制")}</div>
+      <div class="article-body">${sumMd ? mdArticle(sumMd) : sumFallback}</div>
+    </section>
+    <section class="blk">
+      <div class="blk-head"><h2>主线逻辑</h2><span class="spacer"></span>${copyBtn("cpLog", "复制")}</div>
+      <div class="article-body">${logMd ? mdArticle(logMd) : logFallback}</div>
+    </section>`;
+  const cpSum = $("#cpSum");
+  if (cpSum) cpSum.onclick = () => copyText(sumMd || (n.points || []).concat(n.summary ? [n.summary] : []).join("\n") || "", "核心内容已复制");
+  const cpLog = $("#cpLog"); if (cpLog) cpLog.onclick = () => copyText(logMd, "主线逻辑已复制");
+}
+
+function renderMindmapTab(el) {
+  const it = curItem, d = it.deep || {};
+  if (!d.mindmap) {
+    el.innerHTML = `<div class="empty" style="padding:30px">还没有思维导图。去「精读」点开始精读，会一起生成；<a href="#/settings">或在设置里换个更强的模型</a>。</div>`;
+    return;
+  }
+  el.innerHTML = `
+    <div class="row" style="margin:14px 0 10px">
+      <a class="btn sm" href="/api/items/${it.id}/mindmap.html" target="_blank">${ico("external")}新窗口全屏</a>
+      <a class="btn sm" href="/api/items/${it.id}/mindmap.html?download=1">${ico("download")}下载网页</a>
+      ${copyBtn("cpMind", "复制 Markmap 文本")}
+      <span class="muted small">滚轮缩放 · 拖动平移 · 点圆点折叠</span>
+    </div>
+    <iframe class="mindmap" src="/api/items/${it.id}/mindmap.html"></iframe>`;
+  $("#cpMind").onclick = () => copyText(d.mindmap, "Markmap 文本已复制");
 }
 
 function renderTextTab(el, focusSec) {
@@ -460,12 +609,6 @@ function renderDeepTab(el) {
 
     ${d.conclusions.length ? `<section><h2>核心结论</h2><ol class="points">${d.conclusions.map((c) => `<li>${esc(c)}</li>`).join("")}</ol></section>` : ""}
 
-    ${d.mindmap ? `<section><h2>思维导图</h2>
-      <div class="row" style="margin-bottom:10px"><a class="btn sm" href="/api/items/${it.id}/mindmap.html" target="_blank">${ico("external")}新窗口全屏</a>
-        <a class="btn sm" href="/api/items/${it.id}/mindmap.html?download=1">${ico("download")}下载网页</a>
-        <button class="btn sm" id="cpMind">${ico("copy")}复制 Markmap 文本</button></div>
-      <iframe class="mindmap" src="/api/items/${it.id}/mindmap.html"></iframe></section>` : ""}
-
     ${d.outline.length ? `<section><h2>章节大纲</h2><div class="outline">${d.outline.map((o) => `
       <div class="ol-item"><div class="ol-head">${o.time ? `<button class="ts-btn" data-sec="${o.sec ?? ""}" title="跳到文字稿这里">${esc(o.time)}</button>` : ""}<b>${esc(o.title)}</b></div>
       ${o.points.length ? `<ul>${o.points.map((p) => `<li>${esc(p)}</li>`).join("")}</ul>` : ""}</div>`).join("")}</div></section>` : ""}
@@ -504,10 +647,9 @@ function renderDeepTab(el) {
   $("#copyPrompt").onclick = copyPrompt;
   $("#deepRedo").onclick = () => { if (confirm("重新精读会覆盖现在的结果（答题记录保留），确定？")) startDeep(); };
   $$(".ts-btn", el).forEach((b) => b.onclick = () => {
-    const sec = b.dataset.sec === "" ? null : +b.dataset.sec;
-    if (!(it.segments || []).length) return toast("这条文字稿没有时间信息");
-    itemTab = "text"; $$("#itabs button").forEach((x) => x.classList.toggle("on", x.dataset.t === "text"));
-    renderTextTab($("#tabBody"), sec);
+    if (!(it.segments || []).length) return toast("这条逐字稿没有时间信息");
+    itemTab = "script"; $$("#itabs button").forEach((x) => x.classList.toggle("on", x.dataset.t === "script"));
+    renderScriptTab($("#tabBody"));
   });
   $$(".cq", el).forEach((card) => {
     const i = +card.dataset.i;
@@ -530,7 +672,6 @@ function renderDeepTab(el) {
   });
   if (d.quiz.length) renderQuiz(it, d.quiz, qs);
   $("#cpAnki") && ($("#cpAnki").onclick = () => copyText(d.anki.map((c) => `${c.q}\t${c.a}`).join("\n"), "Anki 卡片已复制"));
-  $("#cpMind") && ($("#cpMind").onclick = () => copyText(d.mindmap, "Markmap 文本已复制"));
   const ask = async () => {
     const q = $("#askIn").value.trim(); if (!q) return;
     const log = $("#askLog"); $("#askIn").value = "";

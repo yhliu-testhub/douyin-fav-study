@@ -24,6 +24,9 @@ SYSTEM = """你是一位擅长把短视频内容整理成学习笔记的助手�
   "tags": ["3-5个关键词"],
   "difficulty": "入门 / 进阶 / 高级 选一个",
   "summary": "3-5 句话的详细总结",
+  "one_line": "一句话总结这条内容的结论（25 字以内，直接给结论）",
+  "summary_md": "核心内容拆解（Markdown 正文，见下方排版规则）",
+  "logic_md": "主线逻辑（Markdown 正文，按讲解顺序梳理，见下方排版规则）",
   "points": ["核心观点或知识点，每条一句话，3-8 条"],
   "steps": ["如果视频教了可以照着做的方法，按顺序写出具体步骤；没有就给空数组"],
   "tools": [{{"name": "视频提到的工具/网站/产品名", "use": "它是干什么用的"}}],
@@ -35,6 +38,18 @@ SYSTEM = """你是一位擅长把短视频内容整理成学习笔记的助手�
 - 如果视频是广告带货、短剧剧情、唱歌跳舞、纯娱乐闲聊，或几乎没有实质信息，返回 {{"skip": true, "skip_reason": "简短原因"}}。
 - 如果有实质内容，但和用户关注的主题无关，"relevant" 填 false，其他字段照常填写。
 - 不要编造视频里没有的信息；转写里明显听错的专有名词（比如工具名）可以按常识纠正。
+
+one_line / summary_md / logic_md 的写法：
+- one_line：一句话把结论说透，25 字以内，不要「本条视频讲述了」「作者认为」这类铺垫，直接陈述观点。
+- summary_md（核心内容拆解）：说清这条内容讲了什么、分成哪几块、每块的要点是什么。3-6 段。
+- logic_md（主线逻辑）：按视频从头到尾的讲解顺序梳理行文思路——先从哪里切入、为什么这么讲、在哪里转折、最后落到什么结论。3-6 段。
+- 排版：每个段落开头用两个全角空格「　　」；按语义拆成若干自然段，每段 2-5 句，禁止大段文字堆砌；段落之间用空行分隔。
+- 格式标记（不要满篇标记，每段最多各一处）：
+  **加粗** 用于段落的总起句、段落的收尾总结句；
+  *斜体* 用于过渡、承接、转折类的衔接句；
+  <mark>高亮</mark> 用于核心观点、行业现象、问题本质、专业关键定义。
+- 返回 JSON 时段落用 \n 分隔，两个全角空格照常写在文本里。
+
 - 全部使用简体中文。quiz 出 1-3 题。"""
 
 USER = """标题：{title}
@@ -219,6 +234,9 @@ def normalize(d: dict) -> dict:
         "tags": _str_list(d.get("tags"))[:6],
         "difficulty": str(d.get("difficulty") or "").strip(),
         "summary": str(d.get("summary") or "").strip(),
+        "one_line": str(d.get("one_line") or "").strip(),
+        "summary_md": str(d.get("summary_md") or "").strip(),
+        "logic_md": str(d.get("logic_md") or "").strip(),
         "points": _str_list(d.get("points")),
         "steps": _str_list(d.get("steps")),
         "tools": _obj_list(d.get("tools"), ["name", "use"]),
