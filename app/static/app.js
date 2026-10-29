@@ -55,7 +55,18 @@ const STATUS = {
 const ACTIVE = ["queued", "fetching", "downloading", "transcribing", "extracting"];
 
 let STATE = null;
-let libFilter = { q: "", learned: "", starred: "", category: "", view: "card", sort: "date", desc: true };
+const savedLib = (() => {
+  try { return JSON.parse(localStorage.getItem("libView") || "{}") || {}; } catch { return {}; }
+})();
+let libFilter = {
+  q: "", learned: "", starred: "", category: "",
+  view: savedLib.view === "list" ? "list" : "card",
+  sort: savedLib.sort || "date",
+  desc: savedLib.desc !== undefined ? !!savedLib.desc : true,
+};
+function saveLibView() {
+  try { localStorage.setItem("libView", JSON.stringify({ view: libFilter.view, sort: libFilter.sort, desc: libFilter.desc })); } catch {}
+}
 let procTab = "active";
 let lastItems = [];
 
@@ -113,15 +124,8 @@ function startPolling() {
     const r = route();
     if (r.name === "process") renderProcessLive();
     else if (r.name === "library" && JSON.stringify(STATE?.stats) !== before) renderLibrary(true);
-    else if (r.name === "item" && curItem) {
-      const busy = deepBusy(curItem.id);
-      if (busy && itemTab === "deep") renderDeepTab($("#tabBody"));
-      if (wasDeepBusy && !busy) {
-        await renderItem(curItem.id, "deep");
-        const err = curItem?.chat?.deep_error;
-        toast(err ? "精读失败：" + err : "精读完成 🎉", err ? 6000 : 2600);
-      }
-      wasDeepBusy = busy;
+    else if (r.name === "item" && curItem && curItem.id === r.id) {
+      // 详情页只关心后台处理进度，精读已移除
     }
     const active = STATE?.worker?.busy || STATE?.deep?.item_id;
     pollTimer = setTimeout(tick, active ? 1000 : 2500);
@@ -223,6 +227,7 @@ function bindLibrary() {
   });
   $$("#segView button").forEach((b) => b.onclick = () => {
     libFilter.view = b.dataset.v;
+    saveLibView();
     $$("#segView button").forEach((x) => x.classList.toggle("on", x === b));
     renderLibrary(true);
   });
@@ -230,6 +235,7 @@ function bindLibrary() {
     const k = th.dataset.sort;
     if (libFilter.sort === k) libFilter.desc = !libFilter.desc;
     else { libFilter.sort = k; libFilter.desc = k === "date" || k === "duration"; }
+    saveLibView();
     renderLibrary(true);
   });
   const add = $("#addBtn"); if (add) add.onclick = openAdd;
@@ -291,9 +297,23 @@ function openPlayer(url, title = "") {
   playerEl.addEventListener("click", (e) => {
     if (e.target === playerEl || e.target.closest("[data-close]")) closePlayer();
   });
-  document.addEventListener("keydown", escPlayer);
+  document.addEventListener("keydown", playerKeys);
 }
-function escPlayer(e) { if (e.key === "Escape") closePlayer(); }
+function playerKeys(e) {
+  const v = playerEl && playerEl.querySelector("video");
+  if (!v) return;
+  if (e.code === "Space" || e.key === " ") {      // 空格：暂停 / 继续
+    e.preventDefault();
+    if (v.paused) v.play().catch(() => {}); else v.pause();
+  } else if (e.key === "Enter") {                  // 回车：全屏切换
+    e.preventDefault();
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    else v.requestFullscreen().catch(() => toast("这个视频不支持全屏"));
+  } else if (e.key === "Escape") {
+    if (document.fullscreenElement) return;        // 先让浏览器退出全屏，别直接关掉浮层
+    closePlayer();
+  }
+}
 function closePlayer() {
   if (!playerEl) return;
   const v = playerEl.querySelector("video");
@@ -301,7 +321,7 @@ function closePlayer() {
   playerEl.remove();
   playerEl = null;
   document.body.style.overflow = "";
-  document.removeEventListener("keydown", escPlayer);
+  document.removeEventListener("keydown", playerKeys);
 }
 
 document.addEventListener("click", (e) => {
@@ -354,7 +374,6 @@ function gridHtml(items) {
         <div class="foot">${catChip(it.category)}
           ${it.difficulty ? `<span class="chip gray">${esc(it.difficulty)}</span>` : ""}
           ${it.media_type === "note" ? `<span class="chip gray">图文</span>` : ""}
-          ${it.has_deep ? `<span class="chip teal">${ico("cap", "ic sm")}已精读</span>` : ""}
           <span class="spacer"></span><span>${esc(it.author || "")}</span></div>
       </div></a>`).join("");
 }
@@ -406,13 +425,13 @@ async function renderItem(id, tab) {
   try { it = await api(`/api/items/${id}`); } catch (e) { view.innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
   if (tab) itemTab = tab;
   if (curItem?.id !== id && !tab) { itemTab = "script"; quizState = {}; }
-  if (it.source === "paste" && itemTab === "script" && !tab && curItem?.id !== id) itemTab = "deep";
+  if (it.source === "paste" && itemTab === "script" && !tab && curItem?.id !== id) itemTab = "summary";
   curItem = it;
   const n = it.note || {};
   const cats = [...new Set([...(STATE.settings.categories || []), ...(STATE.stats.categories || []).map((c) => c.category)].filter(Boolean))];
   const [stText, stCls] = STATUS[it.status] || [it.status, "gray"];
   const isNote = it.media_type === "note";
-  const tabs = [["script", "逐字稿"], ["summary", "总结稿"], ["mindmap", "思维导图"], ["deep", "精读" + (it.deep ? " ✓" : "")]];
+  const tabs = [["script", "逐字稿"], ["summary", "总结稿"], ["mindmap", "思维导图"]];
   const srcLink = it.url
     ? `<a class="src-link" href="${esc(it.url)}" target="_blank" rel="noopener">${ico("external", "ic sm")}${esc(prettyUrl(it.url))}</a>`
     : (it.local_path ? `<span class="src-link">${ico("folder", "ic sm")}本地：${esc(it.local_path)}</span>` : "");
@@ -420,7 +439,7 @@ async function renderItem(id, tab) {
     <a class="back" href="javascript:history.length>1?history.back():location.hash='#/library'">← 返回</a>
     <article class="note wide">
       <div class="head-row">
-        <h1>${esc(n.title || (it.deep || {}).title || it.title || "未命名")}</h1>
+        <h1>${esc(n.title || it.title || "未命名")}</h1>
         <div class="head-actions">
           ${it.url ? `<a class="btn sm" href="${esc(it.url)}" target="_blank" rel="noopener">${isNote ? ico("external") + "原图文" : ico("play") + "原视频"}</a>` : ""}
           <button class="btn sm" id="starBtn">${it.starred ? ico("starFill", "ic star-ic") + "已星标" : ico("star") + "星标"}</button>
@@ -435,6 +454,7 @@ async function renderItem(id, tab) {
       </div>
       ${it.title && it.title !== n.title && it.source !== "paste" ? `<div class="muted small">原标题：${esc(it.title)}</div>` : ""}
       <div class="act-row">
+        <button class="btn sm ghost" id="delBtn" style="color:var(--bad)">${ico("x")}删除笔记</button>
         <button class="btn sm" id="pdfBtn">${ico("file")}导出 PDF</button>
         <a class="btn sm" href="/api/items/${it.id}/md">${ico("download")}下载 MD</a>
         ${it.md_path ? `<button class="btn sm" id="revealBtn">${ico("folder")}在文件夹中显示</button>` : ""}
@@ -451,8 +471,6 @@ async function renderItem(id, tab) {
         ${["failed", "skipped", "need_key", "irrelevant", "done"].includes(it.status) && it.transcript && it.source !== "paste"
           ? `<button class="btn sm" id="reBtn">${ico("sparkles")}重新 AI 提炼</button>` : ""}
         ${it.status === "failed" && !it.transcript ? `<button class="btn sm" id="retryBtn">重试</button>` : ""}
-        <span class="spacer"></span>
-        <button class="btn sm ghost" id="delBtn" style="color:var(--bad)">删除这条</button>
       </div>
     </article>`;
 
@@ -468,7 +486,7 @@ async function renderItem(id, tab) {
   $("#retryBtn") && ($("#retryBtn").onclick = async () => { await act("retry"); toast("已重新加入队列"); location.hash = "#/process"; });
   $("#catSel") && ($("#catSel").onchange = async (e) => { await act("category", { value: e.target.value }); toast("分类已修改"); refreshState(); });
   $("#delBtn").onclick = async () => {
-    if (!confirm("确定删除这条？对应的 MD 笔记文件也会删除。")) return;
+    if (!confirm("删除这条笔记？对应的 MD 笔记文件也会一起删除。")) return;
     await act("delete"); toast("已删除"); location.hash = "#/library";
   };
 }
@@ -479,8 +497,7 @@ function renderTab() {
   el.classList.remove("fade-in"); void el.offsetWidth; el.classList.add("fade-in");
   if (itemTab === "script") renderScriptTab(el);
   else if (itemTab === "summary") renderSummaryTab(el);
-  else if (itemTab === "mindmap") renderMindmapTab(el);
-  else renderDeepTab(el);
+  else renderMindmapTab(el);
 }
 
 const mdInline = (t) => esc(t)
@@ -571,20 +588,44 @@ function renderSummaryTab(el) {
 }
 
 function renderMindmapTab(el) {
-  const it = curItem, d = it.deep || {};
-  if (!d.mindmap) {
-    el.innerHTML = `<div class="empty" style="padding:30px">还没有思维导图。去「精读」点开始精读，会一起生成；<a href="#/settings">或在设置里换个更强的模型</a>。</div>`;
+  const it = curItem;
+  const mm = it.mindmap || "";
+  if (!mm) {
+    el.innerHTML = `<div class="empty" style="padding:40px 20px">
+      <p style="margin:0 0 8px">这条还没有思维导图。</p>
+      <p class="muted small" style="margin:0 0 18px">会读取文字稿，让 AI 梳理成一张图。一次 AI 调用，约 10～30 秒。</p>
+      <button class="btn accent" id="genMind">${ico("sparkles")}生成思维导图</button></div>`;
+    $("#genMind").onclick = () => genMindmap(it.id, el);
     return;
   }
   el.innerHTML = `
     <div class="row" style="margin:14px 0 10px">
       <a class="btn sm" href="/api/items/${it.id}/mindmap.html" target="_blank">${ico("external")}新窗口全屏</a>
       <a class="btn sm" href="/api/items/${it.id}/mindmap.html?download=1">${ico("download")}下载网页</a>
-      ${copyBtn("cpMind", "复制 Markmap 文本")}
-      <span class="muted small">滚轮缩放 · 拖动平移 · 点圆点折叠</span>
+      <button class="btn sm" id="cpMind">${ico("copy")}复制 Markmap 文本</button>
+      <span class="spacer"></span>
+      <button class="btn sm ghost" id="reMind">${ico("retry")}重新生成</button>
     </div>
-    <iframe class="mindmap" src="/api/items/${it.id}/mindmap.html"></iframe>`;
-  $("#cpMind").onclick = () => copyText(d.mindmap, "Markmap 文本已复制");
+    <iframe class="mindmap" src="/api/items/${it.id}/mindmap.html"></iframe>
+    <div class="muted small" style="margin-top:8px">滚轮缩放 · 拖动平移 · 点圆点折叠</div>`;
+  $("#cpMind").onclick = () => copyText(mm, "Markmap 文本已复制");
+  $("#reMind").onclick = () => {
+    if (confirm("重新生成会覆盖当前这张图，继续？")) genMindmap(it.id, el);
+  };
+}
+
+function genMindmap(id, el) {
+  const btn = $("#genMind") || $("#reMind");
+  const old = btn ? btn.innerHTML : "";
+  if (btn) { btn.disabled = true; btn.innerHTML = "生成中…"; }
+  toast("正在生成思维导图，约 10～30 秒", 5000);
+  api(`/api/items/${id}/mindmap`, {}).then(() => {
+    renderItem(id, "mindmap");
+    toast("思维导图生成好了");
+  }).catch((e) => {
+    toast(e.message, 5000);
+    if (btn) { btn.disabled = false; btn.innerHTML = old; }
+  });
 }
 
 function renderTextTab(el, focusSec) {

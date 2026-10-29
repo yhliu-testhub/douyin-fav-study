@@ -329,8 +329,9 @@ class Handler(BaseHTTPRequestHandler):
                     return self._err("还没有精读结果")
                 return self._download(deep.anki_tsv(item["deep"]), f"{name}-Anki卡片.txt", "text/plain")
             if sub == "mindmap.html":
-                d = item.get("deep") or {}
-                html = deep.mindmap_html(d.get("title") or name, d.get("mindmap"))
+                md = item.get("mindmap") or (item.get("deep") or {}).get("mindmap")
+                title = (item.get("note") or {}).get("title") or item.get("title") or name
+                html = deep.mindmap_html(title, md)
                 if q("download") == "1":
                     return self._download(html, f"{name}-思维导图.html", "text/html")
                 return self._download(html, None, "text/html")
@@ -525,13 +526,24 @@ class Handler(BaseHTTPRequestHandler):
             deep_runner.submit(item_id)
             return self._json({"id": item_id})
 
-        if path.startswith("/api/items/") and path.split("/")[-1] in ("deep", "check", "ask", "quiz"):
+        if path.startswith("/api/items/") and path.split("/")[-1] in ("mindmap", "deep", "check", "ask", "quiz"):
             try:
                 item_id = int(path.split("/")[3])
             except ValueError:
                 return self._err("bad id")
             act = path.split("/")[-1]
             try:
+                if act == "mindmap":
+                    it = db.get(item_id) or {}
+                    if not it.get("transcript"):
+                        return self._err("这条还没有文字稿，等处理完再生成思维导图")
+                    s = config.load()
+                    if not (s.get("api_key") or "").strip():
+                        return self._err("还没配置 AI Key，请到「设置」里填好")
+                    title = (it.get("note") or {}).get("title") or it.get("title") or ""
+                    md, used = llm.make_mindmap(s, title, it["transcript"])
+                    db.update(item_id, mindmap=md)
+                    return self._json({"ok": True, "md": md, "tokens": used})
                 if act == "deep":
                     if not (db.get(item_id) or {}).get("transcript"):
                         return self._err("这条还没有文字稿，等处理完再精读")

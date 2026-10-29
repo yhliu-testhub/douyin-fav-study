@@ -63,10 +63,11 @@ def conn():
 
 EXTRA_COLUMNS = {
     "segments_json": "TEXT",   # 带时间戳的文字稿分段
-    "deep_json": "TEXT",       # 精读结果
+    "deep_json": "TEXT",       # 精读结果（旧功能保留数据，界面已不再使用）
     "chat_json": "TEXT",       # 精读里的答题点评、问老师记录
     "media_type": "TEXT",      # video / note（图文）
     "images_json": "TEXT",     # 图文的图片（相对于笔记目录的路径列表）
+    "mindmap": "TEXT",         # Markmap 文本，独立生成，不再依赖精读
 }
 
 
@@ -77,6 +78,14 @@ def init():
         for col, typ in EXTRA_COLUMNS.items():
             if col not in have:  # 老版本的数据库自动升级
                 conn().execute(f"ALTER TABLE items ADD COLUMN {col} {typ}")
+        # 老笔记的思维导图原本存在精读结果里，搬到新字段（只补空值，不覆盖后来重新生成的）
+        for r in conn().execute("SELECT id, deep_json FROM items WHERE mindmap IS NULL AND deep_json IS NOT NULL"):
+            try:
+                mm = (json.loads(r["deep_json"]) or {}).get("mindmap") or ""
+            except Exception:
+                mm = ""
+            if mm:
+                conn().execute("UPDATE items SET mindmap=? WHERE id=?", (mm, r["id"]))
         # 程序上次被强制关掉时，卡在中间状态的条目放回队列
         conn().execute(
             f"UPDATE items SET status='queued' WHERE status IN ({','.join('?' * len(ACTIVE))})", ACTIVE)

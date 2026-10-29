@@ -268,6 +268,41 @@ def extract(settings, title, author, transcript, kind="video"):
     return normalize(d), used
 
 
+MINDMAP_SYSTEM = """你是知识整理助手。把用户给的视频文字稿整理成一张思维导图，用 Markmap 的 Markdown 格式输出。
+
+格式：
+# 中心主题（一句话概括全片）
+## 一级分支（3-6 个）
+- 要点（尽量短，不超过 25 字）
+  - 细节（确实需要才展开）
+
+规则：
+- 只输出 Markdown 本体，不要代码块围栏、不要解释、不要前言。
+- 层级最多 4 层，总节点控制在 12-30 个。
+- 忠于文字稿的原意，不要编造；明显听错的专有名词可按常识纠正。
+- 全部使用简体中文。"""
+
+
+def make_mindmap(settings, title, transcript):
+    """按文字稿生成 Markmap 文本。返回 (markdown, token 数)。"""
+    text = (transcript or "").strip()
+    if not text:
+        raise LLMError("这条还没有文字稿，没法生成思维导图")
+    messages = [
+        {"role": "system", "content": MINDMAP_SYSTEM},
+        {"role": "user", "content": f"标题：{title or '（无）'}\n\n文字稿：\n{text[:MAX_CHARS]}"},
+    ]
+    out, used = chat(settings, messages, json_mode=False, temperature=0.4, timeout=240)
+    md = (out or "").strip()
+    if md.startswith("```"):  # 模型偶尔会裹一层代码块
+        md = md.split("\n", 1)[1] if "\n" in md else md
+        md = md.rsplit("```", 1)[0]
+    md = md.strip()
+    if not md or "#" not in md:
+        raise LLMError("模型没有返回有效的思维导图内容，可以再试一次")
+    return md, used
+
+
 CHAT_HINT = ("gpt", "o1", "o3", "o4", "chatgpt", "claude", "deepseek", "qwen", "glm", "moonshot", "kimi",
              "yi-", "llama", "mistral", "gemini", "doubao", "ernie", "hunyuan", "minimax", "abab", "step")
 SKIP_HINT = ("embed", "whisper", "tts", "dall-e", "image", "audio", "realtime", "moderation", "transcribe",
