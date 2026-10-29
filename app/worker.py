@@ -207,8 +207,10 @@ class Worker:
                 return
             it["note"] = note
             path = notes.write(it)
-            db.update(it["id"], status="done", note=note, category=note["category"], md_path=path, reason=None)
-            self.log(f"[{it['id']}] ✓ 完成：{note['title']}")
+            extra = {"mindmap": note["mindmap"]} if note.get("mindmap") else {}  # 空值不覆盖已生成的导图
+            db.update(it["id"], status="done", note=note, category=note["category"], md_path=path,
+                      reason=None, **extra)
+            self.log(f"[{it['id']}] ✓ 完成：{note['title']}" + ("（含思维导图）" if extra else ""))
 
         except douyin.NotLoggedIn as e:
             self._fail(it, f"{e}。请点「登录抖音」后重试", retry=False)

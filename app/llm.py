@@ -31,7 +31,8 @@ SYSTEM = """你是一位擅长把短视频内容整理成学习笔记的助手�
   "steps": ["如果视频教了可以照着做的方法，按顺序写出具体步骤；没有就给空数组"],
   "tools": [{{"name": "视频提到的工具/网站/产品名", "use": "它是干什么用的"}}],
   "concepts": [{{"term": "关键概念", "explain": "用大白话解释"}}],
-  "quiz": [{{"q": "根据视频内容出的一道自测题", "a": "答案"}}]
+  "quiz": [{{"q": "根据视频内容出的一道自测题", "a": "答案"}}],
+  "mindmap": "Markmap 格式的思维导图（用 # 和 - 写的纯文本，见下方规则）；实在整理不出来就填空字符串"
 }}
 
 规则：
@@ -49,6 +50,12 @@ one_line / summary_md / logic_md 的写法：
   *斜体* 用于过渡、承接、转折类的衔接句；
   <mark>高亮</mark> 用于核心观点、行业现象、问题本质、专业关键定义。
 - 返回 JSON 时段落用 \n 分隔，两个全角空格照常写在文本里。
+
+mindmap 的写法（Markmap 格式的纯文本，不是图）：
+- 用 Markdown 标题和列表搭结构：# 中心主题（一句话概括全片）、## 一级分支（3-6 个）、- 要点（不超过 25 字）、  - 细节（确实需要才展开）。
+- 层级最多 4 层，总节点 12-30 个，宁可少而清，不要多而碎。
+- 只写内容本身，不要代码块围栏、不要解释；段与段之间用 \n 分行。
+- 这是本次输出里最后一块内容，如果篇幅紧张，优先保证前面字段完整，mindmap 可以只给两层主干。
 
 - 全部使用简体中文。quiz 出 1-3 题。"""
 
@@ -242,7 +249,14 @@ def normalize(d: dict) -> dict:
         "tools": _obj_list(d.get("tools"), ["name", "use"]),
         "concepts": _obj_list(d.get("concepts"), ["term", "explain"]),
         "quiz": _obj_list(d.get("quiz"), ["q", "a"]),
+        "mindmap": str(d.get("mindmap") or "").strip(),
     }
+    # 模型偶尔会把导图裹进代码块，或者返回空；格式不对就当没生成，不连累整条笔记
+    if note["mindmap"].startswith("```"):
+        note["mindmap"] = note["mindmap"].split("\n", 1)[1] if "\n" in note["mindmap"] else ""
+        note["mindmap"] = note["mindmap"].rsplit("```", 1)[0].strip()
+    if "#" not in note["mindmap"]:
+        note["mindmap"] = ""
     if not note["points"]:
         raise LLMError("AI 返回的核心观点为空")
     if not note["title"]:
@@ -260,7 +274,7 @@ def extract(settings, title, author, transcript, kind="video"):
             label="图文笔记的正文和图片文字（【图N】是第 N 张图里识别出的文字）" if kind == "note" else "语音转文字稿",
             transcript=(transcript or "")[:MAX_CHARS])},
     ]
-    text, used = chat(settings, messages)
+    text, used = chat(settings, messages, max_tokens=8000)
     try:
         d = parse_json(text)
     except Exception:
