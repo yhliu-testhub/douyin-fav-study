@@ -13,7 +13,7 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from . import __version__, backup, config, db, deep, douyin, llm, notes, ocr, transcribe
+from . import __version__, backup, config, db, deep, douyin, llm, notes, ocr, transcribe, trash
 from .worker import Worker, scan_inbox
 
 _DEPS = None
@@ -81,12 +81,33 @@ def local_video(item):
     return None
 
 
+def video_files(item):
+    """这条笔记可能对应的本地视频文件（去重、只留真实存在的）。"""
+    out, seen = [], set()
+    cands = []
+    if item.get("local_path"):
+        cands.append(Path(item["local_path"]))
+    aid = str(item.get("aweme_id") or "")
+    if aid.isdigit():  # 抓下来的视频按 aweme_id.mp4 存在 data/media
+        cands.append(config.MEDIA_DIR / f"{aid}.mp4")
+    for f in cands:
+        k = str(f).lower()
+        if k in seen:
+            continue
+        seen.add(k)
+        if f.is_file() and f.suffix.lower() in VIDEO_EXT:
+            out.append(f)
+    return out
+
+
 def with_video(items):
-    """给列表补 has_video / video_url：前端据此判断播放键能不能点。"""
+    """给列表补 has_video / video_url / video_file：前端据此判断播放键能不能点、能不能去定位。"""
     for it in items:
-        ok = local_video(it) is not None
+        f = local_video(it)
+        ok = f is not None
         it["has_video"] = ok
         it["video_url"] = f"/api/items/{it['id']}/video" if ok else None
+        it["video_file"] = str(f) if ok else None   # 绝对路径，给「定位」和删除确认框用
     return items
 worker: Worker = None
 deep_runner: deep.DeepRunner = None
@@ -446,6 +467,14 @@ class Handler(BaseHTTPRequestHandler):
                         reveal(it["md_path"])
                     else:
                         return self._err("这条还没有生成笔记文件")
+                elif what in ("video", "video_file"):
+                    it = db.get(int(b.get("id")))
+                    if not it:
+                        return self._err("找不到这条", 404)
+                    fs = video_files(it)
+                    if not fs:
+                        return self._err("这条没有本地视频文件（可能在转录后已清理，或本来就只存了链接）")
+                    reveal(fs[0])
                 return self._json({"ok": True})
             except Exception as e:
                 return self._err(f"打不开：{e}")
@@ -689,9 +718,17 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     db.move_to_folder(item_id, int(v))
             elif act == "delete":
+                removed, failed = [], []
+                if b.get("with_video"):
+                    for f in video_files(it):
+                        ok, msg = trash.delete(f)
+                        if ok:
+                            removed.append({"name": f.name, "how": msg})
+                        else:
+                            failed.append({"name": f.name, "why": msg})
                 notes.remove(it, with_images=True)
                 db.delete(item_id)
-                return self._json({"deleted": True})
+                return self._json({"deleted": True, "videos_removed": removed, "videos_failed": failed})
             else:
                 return self._err("未知操作")
             return self._json(db.get(item_id))

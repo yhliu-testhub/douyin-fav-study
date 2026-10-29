@@ -473,13 +473,16 @@ const noVideoWhy = (it) => (it.media_type === "note"
 
 function videoCell(it) {
   if (it.has_video) {
-    return `<button class="play-btn" data-play="${esc(it.video_url)}" data-title="${esc(it.note_title || it.title || "")}" title="在本页播放">${ico("play", "ic sm")}</button>`;
+    return `<span class="vcell">
+      <button class="play-btn" data-play="${esc(it.video_url)}" data-title="${esc(it.note_title || it.title || "")}" data-id="${it.id}" title="在本页播放">${ico("play", "ic sm")}</button>
+      <button class="loc-btn" data-loc-video="${it.id}" title="在文件夹中定位视频原文件">${ico("folder", "ic sm")}</button>
+    </span>`;
   }
   return `<span class="play-btn off" tabindex="0" data-play-off="${esc(noVideoWhy(it))}" title="${esc(noVideoWhy(it))}">${ico("play", "ic sm")}</span>`;
 }
 
 let playerEl = null;
-function openPlayer(url, title = "") {
+function openPlayer(url, title = "", itemId = "") {
   if (!url) return;
   closePlayer();
   playerEl = document.createElement("div");
@@ -487,6 +490,7 @@ function openPlayer(url, title = "") {
   playerEl.innerHTML = `<div class="player-box">
     <div class="player-bar">
       <span class="player-title">${esc(title)}</span><span class="spacer"></span>
+      ${itemId ? `<button class="btn sm ghost" data-loc-video="${itemId}">${ico("folder", "ic sm")}定位原文件</button>` : ""}
       <a class="btn sm ghost" href="${esc(url)}" target="_blank" rel="noopener">新窗口打开</a>
       <button class="btn sm ghost" data-close>关闭</button>
     </div>
@@ -527,10 +531,19 @@ function closePlayer() {
 
 document.addEventListener("click", (e) => {
   const on = e.target.closest && e.target.closest("[data-play]");
-  if (on) { e.preventDefault(); e.stopPropagation(); openPlayer(on.dataset.play, on.dataset.title || ""); return; }
+  if (on) { e.preventDefault(); e.stopPropagation(); openPlayer(on.dataset.play, on.dataset.title || "", on.dataset.id || ""); return; }
+  const loc = e.target.closest && e.target.closest("[data-loc-video]");
+  if (loc) { e.preventDefault(); e.stopPropagation(); locateVideo(loc.dataset.locVideo); return; }
   const off = e.target.closest && e.target.closest("[data-play-off]");
   if (off) { e.preventDefault(); e.stopPropagation(); toast(off.dataset.playOff); }
 });
+
+/* 在系统文件管理器里定位视频原文件（Windows 是资源管理器里选中它） */
+function locateVideo(id) {
+  api("/api/open", { what: "video", id: +id })
+    .then(() => toast("已定位到视频文件"))
+    .catch((e) => toast(e.message));
+}
 
 function detailHtml(items) {
   if (!items.length) return gridHtml(items);
@@ -569,7 +582,8 @@ function gridHtml(items) {
       <div class="cover">${it.cover ? `<img src="${esc(it.cover)}" referrerpolicy="no-referrer" loading="lazy" onerror="this.remove()">` : ""}
         <div class="ph cat-${catColor(it.category)}" ${it.cover ? 'style="z-index:-1"' : ""}>${ico(it.media_type === "note" ? "file" : "play", "ic ph-ic")}</div>
         ${it.has_video
-          ? `<span class="cardplay" role="button" tabindex="0" data-play="${esc(it.video_url)}" data-title="${esc(it.note_title || it.title || "")}" title="在本页播放">${ico("play", "ic sm")}</span>`
+          ? `<span class="cardplay" role="button" tabindex="0" data-play="${esc(it.video_url)}" data-title="${esc(it.note_title || it.title || "")}" data-id="${it.id}" title="在本页播放">${ico("play", "ic sm")}</span>
+             <span class="cardloc" role="button" tabindex="0" data-loc-video="${it.id}" title="在文件夹中定位视频原文件">${ico("folder", "ic sm")}</span>`
           : `<span class="cardplay off" role="button" tabindex="0" data-play-off="${esc(noVideoWhy(it))}" title="${esc(noVideoWhy(it))}">${ico("play", "ic sm")}</span>`}
         ${it.duration ? `<span class="dur">${fmtDur(it.duration)}</span>` : ""}</div>
       <div class="body">
@@ -661,7 +675,8 @@ async function renderItem(id, tab) {
         <button class="btn sm ghost" id="delBtn" style="color:var(--bad)">${ico("x")}删除笔记</button>
         <button class="btn sm" id="pdfBtn">${ico("file")}导出 PDF</button>
         <a class="btn sm" href="/api/items/${it.id}/md">${ico("download")}下载 MD</a>
-        ${it.md_path ? `<button class="btn sm" id="revealBtn">${ico("folder")}在文件夹中显示</button>` : ""}
+        ${it.md_path ? `<button class="btn sm" id="revealBtn">${ico("folder")}定位笔记文件</button>` : ""}
+        ${it.has_video ? `<button class="btn sm" id="locVideoBtn" data-loc-video="${it.id}">${ico("folder")}定位视频文件</button>` : ""}
       </div>
       ${it.reason ? `<div class="banner warn" style="margin-top:14px">${esc(it.reason)}</div>` : ""}
       <div class="tabs-row">
@@ -695,8 +710,30 @@ async function renderItem(id, tab) {
     refreshState(); renderItem(id, itemTab);
   });
   $("#delBtn").onclick = async () => {
-    if (!confirm("删除这条笔记？对应的 MD 笔记文件也会一起删除。")) return;
-    await act("delete"); toast("已删除"); location.hash = "#/library";
+    if (!confirm("删除这条笔记？\n\n对应的 MD 笔记文件会一起删掉。")) return;
+    let withVideo = false;
+    if (it.has_video) {
+      const f = it.video_file || "";
+      const dir = f.replace(/[\\/][^\\/]*$/, "");
+      const brief = (s) => (s.length > 56 ? s.slice(0, 26) + "…" + s.slice(-26) : s);
+      withVideo = confirm(
+        "同时删掉本地视频文件吗？\n\n" +
+        "文件：" + f.replace(/^.*[\\/]/, "") + "\n" +
+        "位置：" + brief(dir) + "\n\n" +
+        "点「确定」= 笔记和视频一起删（视频进回收站，还能还原）\n" +
+        "点「取消」= 只删笔记，视频留在原处"
+      );
+    }
+    let r;
+    try { r = await act("delete", { with_video: withVideo }); }
+    catch (e) { return toast(e.message); }
+    const fail = r.videos_failed || [];
+    const done = r.videos_removed || [];
+    if (fail.length) toast(`笔记已删除，但视频没删掉：${fail.map((x) => x.name).join("、")}（${fail[0].why}）`, 5000);
+    else if (withVideo && done.length) toast(`已删除，视频${done[0].how}（${done[0].name}）`, 4000);
+    else if (withVideo) toast("已删除笔记（没找到可删的视频文件）");
+    else toast("已删除笔记，视频保留在本地");
+    location.hash = "#/library";
   };
 }
 

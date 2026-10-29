@@ -190,8 +190,21 @@ h3 { margin: 0; font-size: 17px; font-weight: 600; }
 .vcard .cardplay.off::after, .play-btn.off::after { content: ""; position: absolute; width: 132%; height: 1.6px;
   background: currentColor; transform: rotate(-45deg); border-radius: 2px; opacity: .85; }
 
-/* 视频：详细视图表格里的播放键 */
-.dtable .c-video { width: 56px; text-align: center; }
+/* 视频：详细视图表格里的播放键 + 定位原文件 */
+.dtable .c-video { width: 84px; text-align: center; }
+.vcell { display: inline-flex; align-items: center; gap: 6px; }
+.loc-btn { position: relative; width: 26px; height: 26px; border-radius: 50%; border: 1px solid var(--line);
+  background: var(--card); display: inline-grid; place-items: center; padding: 0; cursor: pointer; color: var(--ink-3);
+  transition: background .15s, color .15s, border-color .15s, transform .15s; }
+.loc-btn:hover { background: var(--fill-2); color: var(--ink); border-color: var(--line-strong); transform: scale(1.08); }
+/* 卡片封面：播放键右边的小定位键 */
+.vcard .cardloc { position: absolute; left: 48px; bottom: 13px; width: 26px; height: 26px; border-radius: 50%;
+  display: grid; place-items: center; cursor: pointer; color: #fff; background: rgba(0, 0, 0, .5);
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border: 1px solid rgba(255, 255, 255, .28);
+  opacity: .8; transition: opacity .2s var(--ease), transform .2s var(--ease), background .2s; }
+.vcard:hover .cardloc { opacity: 1; }
+.vcard .cardloc:hover { background: var(--accent); border-color: var(--accent); transform: scale(1.08); }
+.vcard .cardloc .ic { width: 14px; height: 14px; }
 .play-btn { position: relative; width: 30px; height: 30px; border-radius: 50%; border: 1px solid var(--line); background: var(--card);
   display: inline-grid; place-items: center; padding: 0; cursor: pointer; color: var(--accent);
   transition: background .15s, color .15s, border-color .15s, transform .15s; }
