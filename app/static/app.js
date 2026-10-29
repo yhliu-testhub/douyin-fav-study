@@ -101,6 +101,8 @@ async function refreshState() {
   const st = STATE.stats, w = STATE.worker;
   const queued = ACTIVE.reduce((n, k) => n + (st.by_status[k] || 0), 0);
   const q = $("#navQueue"); q.hidden = !queued; q.textContent = queued;
+  const doneN = st.by_status.done || 0, nl = $("#navLib");
+  if (nl) { nl.hidden = !doneN; nl.textContent = doneN; nl.title = `收藏库里已有 ${doneN} 条笔记`; }
   const sf = $("#sideStatus");
   const pg = STATE.progress || {}, dp = STATE.deep || {};
   const parts = [];
@@ -1088,40 +1090,38 @@ async function renderProcess() {
   await refreshState();
   const s = STATE.settings;
   view.innerHTML = `
-    <div class="head"><div><h1>添加与处理</h1><div class="muted">视频：读取信息 → 下载 → 本地转文字 → AI 提炼；图文：下载图片 → 识别图片文字 → AI 提炼</div></div></div>
+    <div class="head" style="margin-bottom:14px"><div><h1>添加与处理</h1><div class="muted">视频：读信息 → 下载 → 本地转文字 → AI 提炼；图文：下载图片 → 识别文字 → AI 提炼</div></div></div>
     ${bannerHtml()}
-    <div class="card sync-card">
-      <div class="sync-intro">
+    <div class="add-grid">
+      <div class="card add-card">
         <h2>同步抖音收藏夹</h2>
-        <p class="muted small">会弹出浏览器窗口，第一次需要用抖音 App 扫码登录（只登录一次）。读取时会自动慢慢滚动，请不要关闭那个窗口。之前失败的视频会自动重新排队。</p>
+        <div class="two">
+          <div class="field"><label>读取</label><select id="sKind"><option value="collection">我的收藏</option><option value="like">我的喜欢</option></select></div>
+          <div class="field"><label>最多几条</label><input id="sLimit" type="number" min="1" max="2000" value="${s.sync_limit || 50}"></div>
+        </div>
+        <p class="tiny">会弹出浏览器，首次扫码登录（只一次）。读取时自动滚动，别关窗口；之前失败的会自动重新排队。</p>
+        <div class="row"><button class="btn sm" id="loginBtn">只登录</button><span class="spacer"></span><button class="btn sm primary" id="syncBtn">开始同步</button></div>
       </div>
-      <div class="sync-form">
-        <div class="field"><label>读取哪个列表</label><select id="sKind"><option value="collection">我的收藏</option><option value="like">我的喜欢</option></select></div>
-        <div class="field"><label>最多读取几条（从最新开始）</label><input id="sLimit" type="number" min="1" max="2000" value="${s.sync_limit || 50}"></div>
-        <div class="row sync-btns"><button class="btn" id="loginBtn">只登录抖音</button><button class="btn primary" id="syncBtn">开始同步</button></div>
-      </div>
-    </div>
-    <div class="panels">
-      <div class="card col-card">
+      <div class="card add-card">
         <h2>粘贴分享链接</h2>
-        <p class="muted small">抖音里点「分享 → 复制链接」，视频和图文都可以，一次能贴很多条。</p>
-        <textarea id="pText" rows="5" placeholder="粘贴一条或多条抖音分享内容……"></textarea>
-        <div class="row" style="margin-top:12px"><span class="spacer"></span><button class="btn primary" id="pAdd">添加并处理</button></div>
+        <textarea id="pText" rows="4" placeholder="粘贴一条或多条抖音分享内容……"></textarea>
+        <p class="tiny">抖音里点「分享 → 复制链接」，视频和图文都行，一次能贴很多条。</p>
+        <div class="row"><span class="spacer"></span><button class="btn sm primary" id="pAdd">添加并处理</button></div>
       </div>
-      <div class="card col-card">
+      <div class="card add-card">
         <h2>导入本地视频</h2>
-        <p class="muted small">链接解析不了时的备用办法：把视频文件（mp4 / mov / mp3 等）放进「收件箱」文件夹，再点扫描。原文件不会被删除。</p>
         <div class="inbox-box"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 13h5l1.5 3h5L16 13h5"/><path d="M5.5 5h13L21 13v6H3v-6z"/></svg>
-          <span class="muted small">收件箱文件夹</span></div>
-        <div class="row" style="margin-top:12px"><span class="spacer"></span><button class="btn" id="inboxOpen">打开收件箱文件夹</button><button class="btn primary" id="inboxScan">扫描并处理</button></div>
+          <span class="tiny">点这里打开收件箱</span></div>
+        <p class="tiny">链接解析不了时的备用办法：把文件放进收件箱再点扫描，原文件不会被删除。</p>
+        <div class="row"><span class="spacer"></span><button class="btn sm primary" id="inboxScan">扫描并处理</button></div>
       </div>
     </div>
-    <div class="card status-card" id="statusCard" style="margin-bottom:20px"></div>
+    <div class="card status-card" id="statusCard" style="margin-bottom:14px"></div>
     <div class="card">
       <div class="tabs" id="tabs"></div>
       <div class="qlist" id="qlist"></div>
     </div>
-    <div class="row" style="margin-top:22px;margin-bottom:12px"><h2 style="margin:0">运行日志</h2><span class="spacer"></span>
+    <div class="row" style="margin-top:14px;margin-bottom:8px"><h2 style="margin:0;font-size:16px">运行日志</h2><span class="spacer"></span>
       <button class="btn sm" id="copyLogs">${ico("copy")}一键复制日志</button></div>
     <div class="logs" id="logs"></div>`;
 
@@ -1145,7 +1145,7 @@ async function renderProcess() {
     toast(`已复制 ${STATE.logs.length} 行日志，可以直接粘贴发给我`);
   };
   $(".inbox-box").onclick = () => api("/api/open", { what: "inbox" }).catch((e) => toast(e.message));
-  $("#inboxOpen").onclick =() => api("/api/open", { what: "inbox" }).catch((e) => toast(e.message));
+  $("#inboxOpen") && ($("#inboxOpen").onclick = () => api("/api/open", { what: "inbox" }).catch((e) => toast(e.message)));
   $("#inboxScan").onclick = async () => { const r = await api("/api/inbox", {}); toast(r.added ? `新增 ${r.added} 个文件，开始处理` : "收件箱里没有新文件"); renderProcessLive(); };
   renderProcessLive();
 }

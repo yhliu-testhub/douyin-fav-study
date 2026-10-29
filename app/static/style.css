@@ -110,6 +110,7 @@ input, textarea, select { font: inherit; color: var(--ink); }
 .folders .fhint { font-size: 11px; color: var(--ink-4); padding: 6px 8px; line-height: 1.5; }
 .vcard.dragging, tr.dragging { opacity: .45; }
 .pill { background: var(--accent); color: #fff; border-radius: var(--r-pill); font-size: 11px; font-weight: 600; padding: 0 7px; margin-left: auto; line-height: 18px; }
+.pill.dim { background: var(--fill-2); color: var(--ink-3); }
 .side-foot { font-size: 12px; color: var(--ink-3); padding: 10px; border-top: 1px solid var(--line); white-space: pre-line; }
 .side-foot.busy { color: var(--accent); }
 
@@ -352,7 +353,7 @@ details summary { cursor: pointer; color: var(--link); }
 .check { display: flex; gap: 10px; align-items: center; font-weight: 400 !important; }
 
 /* ---------------------------------------------------------------- 处理中心 */
-.status-card { display: flex; gap: 16px; align-items: center; }
+.status-card { display: flex; gap: 14px; align-items: center; padding: 13px 18px; }
 .spinner { width: 18px; height: 18px; border: 2px solid var(--fill-2); border-top-color: var(--accent); border-radius: 50%; animation: spin .9s linear infinite; flex: none; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .tabs { display: flex; gap: 22px; border-bottom: 1px solid var(--line); margin-bottom: 12px; flex-wrap: wrap; }
@@ -366,13 +367,13 @@ details summary { cursor: pointer; color: var(--link); }
 .pane[hidden] { display: none; }
 .pane > .card:not(:last-child) { margin-bottom: 16px; }
 .qlist { display: flex; flex-direction: column; }
-.qrow { display: grid; grid-template-columns: 1fr auto; gap: 12px; padding: 12px 4px; border-bottom: 1px solid var(--line); align-items: center; }
+.qrow { display: grid; grid-template-columns: 1fr auto; gap: 12px; padding: 8px 4px; border-bottom: 1px solid var(--line); align-items: center; }
 .qrow:last-child { border-bottom: 0; }
 .qrow .t { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .qrow .t a { color: inherit; }
 .qrow .r { font-size: 13px; color: var(--ink-3); margin-top: 2px; }
-.logs { font: 12.5px/1.75 var(--mono); max-height: 280px; overflow: auto; background: var(--card); border-radius: var(--r-card);
-  padding: 14px 18px; color: var(--ink-2); }
+.logs { font: 12.5px/1.6 var(--mono); max-height: 168px; overflow: auto; background: var(--card); border-radius: var(--r-card);
+  padding: 12px 16px; color: var(--ink-2); }
 .logs div span { color: var(--ink-4); margin-right: 10px; }
 
 /* ---------------------------------------------------------------- 弹窗与提示 */
@@ -390,14 +391,14 @@ details summary { cursor: pointer; color: var(--link); }
 @keyframes rise { from { opacity: 0; transform: translate(-50%, 8px); } }
 
 /* ---------------------------------------------------------------- 进度卡片 */
-.status-card .pcard { flex: 1; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
-.ptitle { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 16px; }
-.stepper { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 13px; }
-.step { padding: 3px 12px; border-radius: var(--r-pill); background: var(--fill); color: var(--ink-3); font-weight: 500; }
+.status-card .pcard { flex: 1; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.ptitle { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; }
+.stepper { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; font-size: 12.5px; }
+.step { padding: 2px 9px; border-radius: var(--r-pill); background: var(--fill); color: var(--ink-3); font-weight: 500; }
 .step.done { background: var(--ok-soft); color: var(--ok); }
 .step.now { background: var(--accent); color: #fff; font-weight: 600; }
 .arrow { color: var(--ink-4); }
-.big-bar { height: 8px; }
+.big-bar { height: 6px; }
 
 /* ---------------------------------------------------------------- 精读 */
 .itabs { margin-top: 22px; }
@@ -464,22 +465,24 @@ iframe.mindmap { width: 100%; height: 420px; border: 0; border-radius: var(--r-c
 .field .model-pick select option { color: var(--ink); }
 
 /* 添加与处理：同步卡片通栏，下面两张并排 */
-.sync-card { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr); gap: 28px; align-items: center; margin-bottom: 20px; }
-.sync-card h2 { margin-bottom: 6px; }
-.sync-card .sync-intro p { margin: 0; line-height: 1.65; }
-.sync-form { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 16px; }
-.sync-form .sync-btns { grid-column: 1 / -1; justify-content: flex-end; }
-.col-card { display: flex; flex-direction: column; }
-.col-card h2 { margin-bottom: 6px; }
-.col-card p { margin: 0 0 12px; line-height: 1.6; }
-.col-card textarea { flex: 1; min-height: 120px; resize: vertical; }
-.col-card > .row:last-child { margin-top: auto !important; padding-top: 12px; }
+/* 添加与处理：三个入口并排，尽量一屏看全 */
+.add-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin-bottom: 14px; align-items: stretch; }
+.add-card { display: flex; flex-direction: column; gap: 9px; padding: 15px 17px; }
+.add-card h2 { font-size: 15px; margin: 0; }
+.add-card .two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.add-card .field label { font-size: 12.5px; margin-bottom: 4px; }
+.add-card .tiny { margin: 0; font-size: 12px; line-height: 1.5; color: var(--ink-3); }
+.add-card textarea { min-height: 74px; resize: none; }
+.add-card .row:last-child { margin-top: auto; }
+.add-card .inbox-box { flex: none; min-height: 64px; }
+.add-card .inbox-box svg { width: 22px; height: 22px; }
 .inbox-box { flex: 1; min-height: 120px; border: 1.5px dashed var(--line-strong); border-radius: var(--r-in); display: flex; flex-direction: column;
   align-items: center; justify-content: center; gap: 6px; color: var(--ink-4); cursor: pointer; transition: background .2s var(--ease); }
 .inbox-box:hover { background: var(--fill); }
 .inbox-box svg { width: 34px; height: 34px; }
 .nav-bottom { flex: 0; border-top: 1px solid var(--line); padding-top: 10px; }
-@media (max-width: 900px) { .sync-card, .sync-form { grid-template-columns: 1fr; } .nav-bottom { border-top: 0; padding-top: 0; } }
+@media (max-width: 1100px) { .add-grid { grid-template-columns: 1fr; } }
+@media (max-width: 900px) { .nav-bottom { border-top: 0; padding-top: 0; } }
 
 /* 图文：画廊、识别文字对照、大图查看 */
 .gallery { display: flex; gap: 10px; overflow-x: auto; margin: 18px 0 4px; padding-bottom: 6px; scroll-snap-type: x mandatory; }

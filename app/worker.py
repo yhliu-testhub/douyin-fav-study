@@ -150,6 +150,7 @@ class Worker:
 
     def _process_one_inner(self, it, s):
         label = (it.get("title") or it.get("url") or "")[:30]
+        media = None   # 本次用到的本地视频（重新提炼时可能没有）
         try:
             # 1-2. 拿到视频文件（已经有文字稿的跳过这一步，比如重新提炼）
             if not it.get("transcript"):
@@ -215,6 +216,7 @@ class Worker:
                 extra["folder_id"] = fid
             db.update(it["id"], status="done", note=note, category=note["category"], md_path=path,
                       reason=None, **extra)
+            self._rename_video(it, media, note.get("title"))
             self.log(f"[{it['id']}] ✓ 完成：{note['title']}" + ("（含思维导图）" if extra else ""))
 
         except douyin.NotLoggedIn as e:
@@ -348,6 +350,42 @@ class Worker:
             Path(media).unlink(missing_ok=True)
         except Exception:
             pass
+
+    def _rename_video(self, it, media, title):
+        """把下载下来的视频改成跟笔记标题一样的名字，方便在资源管理器里认出来。
+
+        只处理程序自己下载的副本；你自己放进收件箱的原视频一律不改名。
+        改名后路径记进 local_path，播放和「定位原文件」都靠它。
+        """
+        if it.get("source") == "local" or not media or not (title or "").strip():
+            return
+        cur = Path(media)
+        if not cur.is_file() or cur.suffix.lower() not in MEDIA_EXT:
+            return
+        want = notes.safe_name(title, 40)
+        if cur.stem == want:
+            return
+        dest = cur.with_name(want + cur.suffix)
+        n = 2
+        while dest.exists() and n < 60:   # 同名视频很常见，加序号避开
+            dest = cur.with_name(f"{want}-{n}{cur.suffix}")
+            n += 1
+        if dest == cur or dest.exists():
+            return
+        try:
+            cur.rename(dest)
+        except OSError as e:
+            self.log(f"[{it['id']}] 视频改名失败（不影响笔记）：{e}")
+            return
+        old = it.get("local_path")
+        db.update(it["id"], local_path=str(dest))
+        if old:   # 上一次提炼留下的旧名字副本，顺手清掉，免得堆两份
+            try:
+                op = Path(old)
+                if op.is_file() and op.resolve() != dest.resolve():
+                    op.unlink()
+            except Exception:
+                pass
 
 
 def scan_inbox():
