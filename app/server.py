@@ -34,6 +34,31 @@ def deps_status():
     return _DEPS
 
 STATIC = Path(__file__).resolve().parent / "static"
+VIDEO_EXT = (".mp4", ".m4v", ".webm", ".mov", ".mkv")
+
+
+def local_video(item):
+    """这条笔记本地有没有可直接播放的视频；有就返回路径，没有返回 None。"""
+    p = item.get("local_path")
+    if p:
+        f = Path(p)
+        if f.is_file() and f.suffix.lower() in VIDEO_EXT:
+            return f
+    aid = str(item.get("aweme_id") or "")
+    if aid.isdigit():  # 抓下来的视频按 aweme_id.mp4 存在 data/media，转录后可能已删
+        f = config.MEDIA_DIR / f"{aid}.mp4"
+        if f.is_file():
+            return f
+    return None
+
+
+def with_video(items):
+    """给列表补 has_video / video_url：前端据此判断播放键能不能点。"""
+    for it in items:
+        ok = local_video(it) is not None
+        it["has_video"] = ok
+        it["video_url"] = f"/api/items/{it['id']}/video" if ok else None
+    return items
 worker: Worker = None
 deep_runner: deep.DeepRunner = None
 
@@ -158,6 +183,58 @@ class Handler(BaseHTTPRequestHandler):
         with open(f, "rb") as fh:
             shutil.copyfileobj(fh, self.wfile, 1024 * 256)
 
+    def _send_video(self, f):
+        """视频流：支持 Range 分段，浏览器才能拖进度条、边下边播。"""
+        try:
+            size = f.stat().st_size
+        except OSError:
+            return self._err("视频文件读不到", 404)
+        ctype = mimetypes.guess_type(f.name)[0] or "video/mp4"
+        start, end, partial = 0, size - 1, False
+        rng = (self.headers.get("Range") or "").strip()
+        if rng.startswith("bytes="):
+            a, _, b = rng[len("bytes="):].split(",")[0].strip().partition("-")
+            try:
+                if a == "":  # bytes=-5000 表示要最后 5 KB
+                    n = int(b)
+                    if n > 0:
+                        start = max(size - n, 0)
+                else:
+                    start = int(a)
+                    if b:
+                        end = min(int(b), size - 1)
+            except ValueError:
+                start, end, partial = 0, size - 1, False
+            else:
+                if start >= size or start > end:
+                    self.send_response(416)
+                    self.send_header("Content-Range", f"bytes */{size}")
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
+                partial = True
+        length = end - start + 1
+        self.send_response(206 if partial else 200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Accept-Ranges", "bytes")
+        self.send_header("Content-Length", str(length))
+        if partial:
+            self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+        self.send_header("Cache-Control", "max-age=3600")
+        self.end_headers()
+        try:
+            with open(f, "rb") as fh:
+                fh.seek(start)
+                left = length
+                while left > 0:
+                    chunk = fh.read(min(1024 * 256, left))
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+                    left -= len(chunk)
+        except OSError:
+            pass  # 播放器拖进度条会主动断开旧连接，属正常
+
     def _busy_reason(self):
         if worker.state.get("busy"):
             return "后台正在处理视频，请先等处理完或点「停止」，再恢复备份"
@@ -229,9 +306,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"dir": str(backup.BACKUP_DIR), "files": backup.list_auto_backups()})
         if path == "/api/items":
             learned = q("learned")
-            return self._json(db.list_items(
+            return self._json(with_video(db.list_items(
                 status=q("status"), category=q("category"), q=(q("q") or "").strip() or None,
-                learned=None if learned in (None, "") else learned == "1", starred=q("starred") == "1"))
+                learned=None if learned in (None, "") else learned == "1", starred=q("starred") == "1")))
         if path.startswith("/api/items/"):
             parts = path.split("/")
             try:
@@ -242,6 +319,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self._err("找不到这条", 404)
             sub = parts[4] if len(parts) > 4 else ""
             name = notes.safe_name((item.get("note") or {}).get("title") or item.get("title"))
+            if sub == "video":
+                f = local_video(item)
+                if not f:
+                    return self._err("这条没有本地视频（可能是图文、或是视频自带字幕未下载、也可能已清理）", 404)
+                return self._send_video(f)
             if sub == "anki.txt":
                 if not item.get("deep"):
                     return self._err("还没有精读结果")
@@ -264,6 +346,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(body)
                 return
+            with_video([item])
             return self._json(item)
         return self._err("not found", 404)
 

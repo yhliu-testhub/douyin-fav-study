@@ -150,7 +150,7 @@ def next_queued():
 
 
 def list_items(status=None, category=None, q=None, learned=None, starred=None, limit=1000):
-    sql = ("SELECT id,source,aweme_id,url,title,author,duration,cover,status,reason,category,learned,starred,"
+    sql = ("SELECT id,source,aweme_id,url,local_path,title,author,duration,cover,status,reason,category,learned,starred,"
            "created_at,updated_at,note_json,media_type,(deep_json IS NOT NULL) AS has_deep FROM items WHERE 1=1")
     args = []
     if status:

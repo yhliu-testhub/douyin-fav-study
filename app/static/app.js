@@ -259,12 +259,65 @@ function sortItems(items) {
 
 const bodyHtml = (items) => (libFilter.view === "list" ? detailHtml(items) : gridHtml(items));
 
+/* ---------------------------------------------------------------- 本地视频播放 */
+const noVideoWhy = (it) => (it.media_type === "note"
+  ? "这条是图文，没有视频"
+  : "本地没有视频文件（视频自带字幕时不会下载视频，或转录后已清理）");
+
+function videoCell(it) {
+  if (it.has_video) {
+    return `<button class="play-btn" data-play="${esc(it.video_url)}" data-title="${esc(it.note_title || it.title || "")}" title="在本页播放">${ico("play", "ic sm")}</button>`;
+  }
+  return `<span class="play-btn off" tabindex="0" data-play-off="${esc(noVideoWhy(it))}" title="${esc(noVideoWhy(it))}">${ico("play", "ic sm")}</span>`;
+}
+
+let playerEl = null;
+function openPlayer(url, title = "") {
+  if (!url) return;
+  closePlayer();
+  playerEl = document.createElement("div");
+  playerEl.className = "player-mask";
+  playerEl.innerHTML = `<div class="player-box">
+    <div class="player-bar">
+      <span class="player-title">${esc(title)}</span><span class="spacer"></span>
+      <a class="btn sm ghost" href="${esc(url)}" target="_blank" rel="noopener">新窗口打开</a>
+      <button class="btn sm ghost" data-close>关闭</button>
+    </div>
+    <video src="${esc(url)}" controls autoplay playsinline preload="metadata"></video>
+  </div>`;
+  document.body.appendChild(playerEl);
+  document.body.style.overflow = "hidden";
+  requestAnimationFrame(() => playerEl && playerEl.classList.add("on"));
+  playerEl.addEventListener("click", (e) => {
+    if (e.target === playerEl || e.target.closest("[data-close]")) closePlayer();
+  });
+  document.addEventListener("keydown", escPlayer);
+}
+function escPlayer(e) { if (e.key === "Escape") closePlayer(); }
+function closePlayer() {
+  if (!playerEl) return;
+  const v = playerEl.querySelector("video");
+  if (v) { v.pause(); v.removeAttribute("src"); v.load(); }  // 断开连接，别在后台继续拉流
+  playerEl.remove();
+  playerEl = null;
+  document.body.style.overflow = "";
+  document.removeEventListener("keydown", escPlayer);
+}
+
+document.addEventListener("click", (e) => {
+  const on = e.target.closest && e.target.closest("[data-play]");
+  if (on) { e.preventDefault(); e.stopPropagation(); openPlayer(on.dataset.play, on.dataset.title || ""); return; }
+  const off = e.target.closest && e.target.closest("[data-play-off]");
+  if (off) { e.preventDefault(); e.stopPropagation(); toast(off.dataset.playOff); }
+});
+
 function detailHtml(items) {
   if (!items.length) return gridHtml(items);
   const cols = [["title", "标题"], ["author", "作者"], ["category", "分类"], ["date", "收藏日期"], ["duration", "时长"]];
   const mark = (k) => (libFilter.sort === k ? (libFilter.desc ? " ↓" : " ↑") : "");
   return `<table class="dtable"><thead><tr>
     ${cols.map(([k, l]) => `<th data-sort="${k}" class="${libFilter.sort === k ? "on" : ""}">${l}${mark(k)}</th>`).join("")}
+    <th class="c-video">视频</th>
     <th>链接</th></tr></thead><tbody>
     ${items.map((it) => `<tr>
       <td class="c-title"><a href="#/item/${it.id}">${it.starred ? ico("starFill", "ic sm star-ic") : ""}${esc(it.note_title || it.title || "未命名")}</a></td>
@@ -272,6 +325,7 @@ function detailHtml(items) {
       <td>${catChip(it.category)}</td>
       <td class="c-date">${fmtDate(it.created_at)}</td>
       <td class="c-dur">${fmtDur(it.duration)}</td>
+      <td class="c-video">${videoCell(it)}</td>
       <td>${it.url ? `<a class="mini" href="${esc(it.url)}" target="_blank" rel="noopener">${it.source === "local" ? "本地" : "打开"}</a>` : ""}</td>
     </tr>`).join("")}
   </tbody></table>`;
@@ -290,6 +344,9 @@ function gridHtml(items) {
     <a class="vcard" href="#/item/${it.id}" style="--i:${Math.min(i, 14)}">
       <div class="cover">${it.cover ? `<img src="${esc(it.cover)}" referrerpolicy="no-referrer" loading="lazy" onerror="this.remove()">` : ""}
         <div class="ph cat-${catColor(it.category)}" ${it.cover ? 'style="z-index:-1"' : ""}>${ico(it.media_type === "note" ? "file" : "play", "ic ph-ic")}</div>
+        ${it.has_video
+          ? `<span class="cardplay" role="button" tabindex="0" data-play="${esc(it.video_url)}" data-title="${esc(it.note_title || it.title || "")}" title="在本页播放">${ico("play", "ic sm")}</span>`
+          : `<span class="cardplay off" role="button" tabindex="0" data-play-off="${esc(noVideoWhy(it))}" title="${esc(noVideoWhy(it))}">${ico("play", "ic sm")}</span>`}
         ${it.duration ? `<span class="dur">${fmtDur(it.duration)}</span>` : ""}</div>
       <div class="body">
         <div class="t">${it.starred ? ico("starFill", "ic star-ic") : ""}${esc(it.note_title || it.title)}</div>
