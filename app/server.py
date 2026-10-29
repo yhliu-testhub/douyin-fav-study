@@ -3,6 +3,7 @@ import json
 import mimetypes
 import shutil
 import tempfile
+import threading
 import traceback
 import os
 import platform
@@ -35,6 +36,34 @@ def deps_status():
 
 STATIC = Path(__file__).resolve().parent / "static"
 VIDEO_EXT = (".mp4", ".m4v", ".webm", ".mov", ".mkv")
+
+# 「AI 自动归类」的进度（前端从 /api/state 读）
+_CLASSIFY = {"busy": False, "done": 0, "total": 0, "msg": ""}
+
+
+def _classify_worker(names):
+    """后台把「待分类」里的笔记逐条交给 AI 判文件夹。"""
+    _CLASSIFY.update(busy=True, done=0, total=0, msg="")
+    try:
+        s = config.load()
+        targets = db.classify_targets(60)
+        _CLASSIFY["total"] = len(targets)
+        for it in targets:
+            note = it.get("note") or {}
+            title = note.get("title") or it.get("title") or ""
+            summary = note.get("summary") or note.get("one_line") or ""
+            try:
+                name, used = llm.classify(s, names, title, summary)
+                config.add_tokens(used)
+                fid = db.folder_id_by_name(name)
+                if fid:
+                    db.move_to_folder(it["id"], fid)
+                _CLASSIFY["done"] += 1
+            except Exception as e:
+                _CLASSIFY["msg"] = str(e)
+                break
+    finally:
+        _CLASSIFY["busy"] = False
 
 
 def local_video(item):
@@ -285,6 +314,8 @@ class Handler(BaseHTTPRequestHandler):
             s = config.load()
             return self._json({
                 "worker": worker.state, "logs": list(worker.logs)[-80:], "stats": db.stats(),
+                "folders": db.list_folders(), "unclassified": db.unclassified_count(),
+                "classify": dict(_CLASSIFY),
                 "settings": config.public(s), "providers": config.PROVIDERS, "free_plans": config.FREE_PLANS,
                 "library_dir": str(config.library_dir()), "inbox_dir": str(config.INBOX_DIR),
                 "asr": transcribe.engine_status(),
@@ -308,6 +339,7 @@ class Handler(BaseHTTPRequestHandler):
             learned = q("learned")
             return self._json(with_video(db.list_items(
                 status=q("status"), category=q("category"), q=(q("q") or "").strip() or None,
+                folder=q("folder"),
                 learned=None if learned in (None, "") else learned == "1", starred=q("starred") == "1")))
         if path.startswith("/api/items/"):
             parts = path.split("/")
@@ -570,6 +602,50 @@ class Handler(BaseHTTPRequestHandler):
             except llm.LLMError as e:
                 return self._err(str(e))
 
+        if path == "/api/folders":
+            try:
+                fid, new = db.folder_add(str(b.get("name") or ""))
+            except ValueError as e:
+                return self._err(str(e))
+            return self._json({"id": fid, "new": new, "folders": db.list_folders()})
+
+        if path == "/api/folders/reorder":
+            ids = b.get("ids") or []
+            if isinstance(ids, list) and ids:
+                db.folder_reorder(ids)
+            return self._json({"folders": db.list_folders()})
+
+        if path == "/api/folders/classify":
+            if _CLASSIFY["busy"]:
+                return self._json({"busy": True, "classify": dict(_CLASSIFY)})
+            names = [f["name"] for f in db.list_folders()]
+            if not names:
+                return self._err("还没有文件夹，先建几个再让它归类")
+            if not db.classify_targets(1):
+                return self._json({"busy": False, "nothing": True})
+            threading.Thread(target=_classify_worker, args=(names,), daemon=True).start()
+            return self._json({"busy": True, "classify": dict(_CLASSIFY)})
+
+        if path.startswith("/api/folders/"):
+            try:
+                fid = int(path.split("/")[3])
+            except (ValueError, IndexError):
+                return self._err("bad id")
+            act = b.get("action")
+            if act == "rename":
+                try:
+                    db.folder_rename(fid, b.get("name"))
+                except ValueError as e:
+                    return self._err(str(e))
+            elif act == "delete":
+                moved = db.folder_delete(fid)
+                return self._json({"deleted": True, "moved": moved, "folders": db.list_folders()})
+            elif act == "seen":
+                db.folder_seen(fid)
+            else:
+                return self._err("未知操作")
+            return self._json({"folders": db.list_folders()})
+
         if path.startswith("/api/items/") and path.endswith("/action"):
             try:
                 item_id = int(path.split("/")[3])
@@ -606,6 +682,12 @@ class Handler(BaseHTTPRequestHandler):
                     it = db.get(item_id)
                     if it["status"] == "done":
                         db.update(item_id, md_path=notes.write(it))
+            elif act == "folder":
+                v = b.get("value")
+                if v in (None, "", 0, "0", "none"):
+                    db.move_to_folder(item_id, None)  # 拖回待分类
+                else:
+                    db.move_to_folder(item_id, int(v))
             elif act == "delete":
                 notes.remove(it, with_images=True)
                 db.delete(item_id)

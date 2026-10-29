@@ -193,7 +193,8 @@ class Worker:
                 return
             self._stage(it, "extracting", f"AI 提炼：{label}")
             note, used = llm.extract(s, it.get("title"), it.get("author"), it["transcript"],
-                                     kind="note" if it.get("media_type") == "note" else "video")
+                                     kind="note" if it.get("media_type") == "note" else "video",
+                                     folders=[f["name"] for f in db.list_folders()])
             config.add_tokens(used)
             if note.get("skip"):
                 db.update(it["id"], status="skipped", reason=note.get("skip_reason"), note=None)
@@ -208,6 +209,9 @@ class Worker:
             it["note"] = note
             path = notes.write(it)
             extra = {"mindmap": note["mindmap"]} if note.get("mindmap") else {}  # 空值不覆盖已生成的导图
+            fid = db.folder_id_by_name(note.get("folder"))
+            if fid:  # 认不出文件夹就留在「待分类」，不会清掉你手动放好的位置
+                extra["folder_id"] = fid
             db.update(it["id"], status="done", note=note, category=note["category"], md_path=path,
                       reason=None, **extra)
             self.log(f"[{it['id']}] ✓ 完成：{note['title']}" + ("（含思维导图）" if extra else ""))

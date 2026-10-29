@@ -59,7 +59,7 @@ const savedLib = (() => {
   try { return JSON.parse(localStorage.getItem("libView") || "{}") || {}; } catch { return {}; }
 })();
 let libFilter = {
-  q: "", learned: "", starred: "", category: "",
+  q: "", learned: "", starred: "", folder: "",
   view: savedLib.view === "list" ? "list" : "card",
   sort: savedLib.sort || "date",
   desc: savedLib.desc !== undefined ? !!savedLib.desc : true,
@@ -108,10 +108,107 @@ async function refreshState() {
   if (dp.item_id) parts.push(`精读 ${dp.pct || 0}% · ${fmtEta(dp.eta)}`);
   sf.className = "side-foot" + (parts.length ? " busy" : "");
   sf.textContent = parts.join("\n") || `就绪 · v${STATE.version || ""}`;
-  $("#navCats").innerHTML = (st.categories || []).map((c) =>
-    `<a href="#/library/cat/${encodeURIComponent(c.category || "其他")}" class="${libFilter.category === c.category ? "on" : ""}">
-      <i class="dot cat-${catColor(c.category)}"></i>${esc(c.category || "其他")}<span>${c.n}</span></a>`).join("");
+  renderNavFolders();
   return STATE;
+}
+
+/* ---------------------------------------------------------------- 侧边栏文件夹 */
+let dragPayload = null;   // {type:"item"|"folder", id}
+
+function renderNavFolders() {
+  const el = $("#navFolders");
+  if (!el || dragPayload) return;  // 正在拖东西时别重建侧栏，会把拖拽打断
+  const fs = STATE.folders || [];
+  const un = STATE.unclassified || 0;
+  el.innerHTML = `
+    <div class="fhead"><span>文件夹</span><button class="icon sm" id="newFolderBtn" title="新建文件夹">＋</button></div>
+    <a class="fitem ${libFilter.folder === "none" ? "on" : ""}" href="#/library/u" data-fid="none"
+       title="AI 没拿准的都会先放这里">
+      <i class="dot" style="background:var(--ink-4)"></i><span class="fname">待分类</span><span class="fcount">${un}</span>
+    </a>
+    ${fs.map((f) => `
+      <a class="fitem ${String(libFilter.folder) === String(f.id) ? "on" : ""}" href="#/library/f/${f.id}"
+         data-fid="${f.id}" draggable="true" title="${esc(f.name)}">
+        <i class="dot cat-${catColor(f.name)}"></i><span class="fname">${esc(f.name)}</span>
+        ${f.unread ? `<i class="ndot" title="有新笔记"></i>` : ""}
+        <span class="fcount">${f.n}</span>
+        <button class="fdel" data-del="${f.id}" title="删除文件夹">✕</button>
+      </a>`).join("")}
+    ${fs.length ? "" : `<div class="fhint">还没有文件夹，点上面的 ＋ 建一个</div>`}`;
+  bindFolders();
+}
+
+function bindFolders() {
+  const nf = $("#newFolderBtn");
+  if (nf) nf.onclick = async (e) => {
+    e.preventDefault(); e.stopPropagation();
+    const name = (prompt("新文件夹的名字：") || "").trim();
+    if (!name) return;
+    try {
+      const r = await api("/api/folders", { name });
+      toast(r.new ? `已建「${name}」` : `「${name}」已存在`);
+      await refreshState();
+    } catch (err) { toast(err.message); }
+  };
+  $$("#navFolders .fdel").forEach((b) => b.onclick = async (e) => {
+    e.preventDefault(); e.stopPropagation();
+    const fid = b.dataset.del;
+    const f = (STATE.folders || []).find((x) => String(x.id) === String(fid));
+    if (!f) return;
+    if (!confirm(`删除文件夹「${f.name}」？\n里面的 ${f.n} 条笔记会回到「待分类」，笔记和文件都不会删。`)) return;
+    await api(`/api/folders/${fid}`, { action: "delete" });
+    toast("文件夹已删除，笔记回到待分类");
+    if (String(libFilter.folder) === String(fid)) location.hash = "#/library";
+    await refreshState();
+    if (route().name === "library") renderLibrary(true);
+  });
+  $$("#navFolders .fitem").forEach((a) => {
+    const fid = a.dataset.fid;
+    if (fid !== "none") {
+      a.addEventListener("dragstart", (e) => {
+        dragPayload = { type: "folder", id: fid };
+        e.dataTransfer.effectAllowed = "move";
+        try { e.dataTransfer.setData("text/plain", "folder:" + fid); } catch {}
+        a.classList.add("dragging");
+      });
+      a.addEventListener("dragend", () => { a.classList.remove("dragging"); dragPayload = null; });
+    }
+    a.addEventListener("dragover", (e) => {
+      if (!dragPayload) return;
+      if (dragPayload.type === "folder" && (fid === "none" || dragPayload.id === fid)) return;
+      e.preventDefault();
+      a.classList.add("drop-on");
+    });
+    a.addEventListener("dragleave", () => a.classList.remove("drop-on"));
+    a.addEventListener("drop", async (e) => {
+      e.preventDefault(); a.classList.remove("drop-on");
+      const p = dragPayload; dragPayload = null;
+      if (!p) return;
+      if (p.type === "item") return moveItemToFolder(p.id, fid);
+      if (fid !== "none") return reorderFolder(p.id, fid);
+    });
+  });
+}
+
+async function moveItemToFolder(id, fid) {
+  try {
+    await api(`/api/items/${id}/action`, { action: "folder", value: fid === "none" ? null : +fid });
+    const f = (STATE.folders || []).find((x) => String(x.id) === String(fid));
+    toast(fid === "none" ? "已移到「待分类」" : `已移入「${f ? f.name : "文件夹"}」`);
+    await refreshState();
+    if (route().name === "library") renderLibrary(true);
+  } catch (e) { toast(e.message); }
+}
+
+async function reorderFolder(moveId, targetId) {
+  const ids = (STATE.folders || []).map((f) => String(f.id));
+  const from = ids.indexOf(String(moveId));
+  if (from < 0) return;
+  ids.splice(from, 1);
+  const to = ids.indexOf(String(targetId));
+  ids.splice(to < 0 ? ids.length : to, 0, String(moveId));
+  await api("/api/folders/reorder", { ids: ids.map(Number) });
+  await refreshState();
 }
 
 let pollTimer = null;
@@ -123,7 +220,7 @@ function startPolling() {
     await refreshState();
     const r = route();
     if (r.name === "process") renderProcessLive();
-    else if (r.name === "library" && JSON.stringify(STATE?.stats) !== before) renderLibrary(true);
+    else if (r.name === "library" && !dragPayload && JSON.stringify(STATE?.stats) !== before) renderLibrary(true);
     else if (r.name === "item" && curItem && curItem.id === r.id) {
       // 详情页只关心后台处理进度，精读已移除
     }
@@ -140,14 +237,22 @@ function route() {
   if (p[0] === "item") return { name: "item", id: +p[1], tab: p[2] };
   if (p[0] === "process") return { name: "process" };
   if (p[0] === "settings") return { name: "settings" };
-  return { name: "library", category: p[1] === "cat" ? p.slice(2).join("/") : "" };
+  let folder = "";
+  if (p[1] === "u") folder = "none";
+  else if (p[1] === "f") folder = p[2] || "";
+  else if (p[1] === "cat") {  // 老链接兼容：按名字找文件夹
+    const name = p.slice(2).join("/");
+    const f = (STATE?.folders || []).find((x) => x.name === name);
+    folder = f ? String(f.id) : "";
+  }
+  return { name: "library", folder };
 }
 
 async function render() {
   const r = route();
   $$(".nav > a").forEach((a) => a.classList.toggle("on", a.dataset.nav === (r.name === "item" ? "library" : r.name)));
   if (!STATE) await refreshState();
-  if (r.name === "library") { libFilter.category = r.category; await refreshState(); return renderLibrary(); }
+  if (r.name === "library") { libFilter.folder = r.folder; await refreshState(); return renderLibrary(); }
   if (r.name === "item") return renderItem(r.id, r.tab);
   if (r.name === "process") return renderProcess();
   if (r.name === "settings") return renderSettings();
@@ -181,10 +286,13 @@ async function renderLibrary(soft = false) {
   const params = new URLSearchParams({ status: "done" });
   if (libFilter.q) params.set("q", libFilter.q);
   if (libFilter.starred) params.set("starred", "1");
-  if (libFilter.category) params.set("category", libFilter.category);
+  if (libFilter.folder) params.set("folder", libFilter.folder);
   if (!soft && !$("#libGrid")) view.innerHTML = skeletonLibrary();
   const items = sortItems(await api("/api/items?" + params));
   lastItems = items;
+
+  const curF = (STATE.folders || []).find((f) => String(f.id) === String(libFilter.folder));
+  const isPending = libFilter.folder === "none";
 
   if (soft && $("#libGrid")) {
     const g = $("#libGrid");
@@ -195,9 +303,12 @@ async function renderLibrary(soft = false) {
   view.innerHTML = `
     ${bannerHtml()}
     <div class="head">
-      <div><h1>${libFilter.category ? `<i class="dot big-dot cat-${catColor(libFilter.category)}"></i>${esc(libFilter.category)}` : "收藏库"}</h1>
-      ${libFilter.category ? `<div class="muted"><a href="#/library">← 全部分类</a></div>` : ""}</div>
+      <div><h1>${curF ? `<i class="dot big-dot cat-${catColor(curF.name)}"></i>${esc(curF.name)}`
+        : isPending ? "待分类" : "收藏库"}</h1>
+      ${libFilter.folder ? `<div class="muted"><a href="#/library">← 全部笔记</a></div>`
+        : ""}</div>
       <div class="spacer"></div>
+      ${isPending ? `<button class="btn" id="classifyBtn" title="把这里的笔记逐条交给 AI 判文件夹">${ico("sparkles")}AI 自动归类</button>` : ""}
       <button class="btn" id="randBtn" title="随机打开一条">${ico("shuffle")}随机看一条</button>
       <button class="btn primary" id="addBtn">${ico("plus")}添加</button>
     </div>
@@ -214,6 +325,9 @@ async function renderLibrary(soft = false) {
     </div>
     <div id="libGrid" class="${libFilter.view === "list" ? "" : "grid"}">${bodyHtml(items)}</div>`;
   bindLibrary();
+  if (curF && curF.unread) {  // 进来就把小红点清掉
+    api(`/api/folders/${curF.id}`, { action: "seen" }).then(() => refreshState()).catch(() => {});
+  }
 }
 
 function bindLibrary() {
@@ -239,6 +353,33 @@ function bindLibrary() {
     renderLibrary(true);
   });
   const add = $("#addBtn"); if (add) add.onclick = openAdd;
+  const cls = $("#classifyBtn");
+  if (cls) cls.onclick = async () => {
+    let r;
+    try { r = await api("/api/folders/classify", {}); } catch (e) { return toast(e.message); }
+    if (r.nothing) return toast("待分类里没有笔记");
+    toast("AI 正在逐条归类，完成后会自动刷新…", 4000);
+    const t0 = Date.now();
+    const timer = setInterval(async () => {
+      await refreshState();
+      const c = STATE.classify || {};
+      if (!c.busy || Date.now() - t0 > 300000) {
+        clearInterval(timer);
+        if (route().name === "library") renderLibrary(true);
+        toast(`归类完成：处理了 ${c.done} 条` + (c.msg ? `（中途出错：${c.msg}）` : ""));
+      }
+    }, 1500);
+  };
+  $$("#libGrid [data-id]").forEach((el) => {  // 把笔记拖到左边文件夹即可归类
+    el.setAttribute("draggable", "true");
+    el.addEventListener("dragstart", (e) => {
+      dragPayload = { type: "item", id: +el.dataset.id };
+      e.dataTransfer.effectAllowed = "move";
+      try { e.dataTransfer.setData("text/plain", "item:" + el.dataset.id); } catch {}
+      el.classList.add("dragging");
+    });
+    el.addEventListener("dragend", () => { el.classList.remove("dragging"); dragPayload = null; });
+  });
   const rand = $("#randBtn");
   if (rand) rand.onclick = async () => {
     const all = await api("/api/items?status=done");
@@ -252,7 +393,7 @@ function sortItems(items) {
   const val = (it) => {
     if (k === "title") return (it.note_title || it.title || "").toLowerCase();
     if (k === "author") return (it.author || "").toLowerCase();
-    if (k === "category") return it.category || "";
+    if (k === "folder") return it.folder_name || "";
     if (k === "duration") return it.duration || 0;
     return it.created_at || 0;
   };
@@ -333,16 +474,16 @@ document.addEventListener("click", (e) => {
 
 function detailHtml(items) {
   if (!items.length) return gridHtml(items);
-  const cols = [["title", "标题"], ["author", "作者"], ["category", "分类"], ["date", "收藏日期"], ["duration", "时长"]];
+  const cols = [["title", "标题"], ["author", "作者"], ["folder", "文件夹"], ["date", "收藏日期"], ["duration", "时长"]];
   const mark = (k) => (libFilter.sort === k ? (libFilter.desc ? " ↓" : " ↑") : "");
   return `<table class="dtable"><thead><tr>
     ${cols.map(([k, l]) => `<th data-sort="${k}" class="${libFilter.sort === k ? "on" : ""}">${l}${mark(k)}</th>`).join("")}
     <th class="c-video">视频</th>
     <th>链接</th></tr></thead><tbody>
-    ${items.map((it) => `<tr>
+    ${items.map((it) => `<tr data-id="${it.id}">
       <td class="c-title"><a href="#/item/${it.id}">${it.starred ? ico("starFill", "ic sm star-ic") : ""}${esc(it.note_title || it.title || "未命名")}</a></td>
       <td>${esc(it.author || "")}</td>
-      <td>${catChip(it.category)}</td>
+      <td>${catChip(it.folder_name || "待分类")}</td>
       <td class="c-date">${fmtDate(it.created_at)}</td>
       <td class="c-dur">${fmtDur(it.duration)}</td>
       <td class="c-video">${videoCell(it)}</td>
@@ -353,6 +494,9 @@ function detailHtml(items) {
 
 function gridHtml(items) {
   if (!items.length) {
+    if (libFilter.folder) return emptyHtml("inbox",
+      libFilter.folder === "none" ? "待分类里没有笔记" : "这个文件夹还是空的",
+      "把笔记卡片拖到左侧的文件夹上就能归类，或者点上面的「AI 自动归类」。");
     const any = STATE.stats.total;
     if (libFilter.q || libFilter.learned || libFilter.starred)
       return emptyHtml("search", "没有符合条件的笔记", "换个关键词，或者切回「全部」看看。");
@@ -361,7 +505,7 @@ function gridHtml(items) {
       `<a class="btn primary" href="#/process">${ico("plus")}同步收藏夹</a><button class="btn" onclick="openAdd()">粘贴分享链接</button>`);
   }
   return items.map((it, i) => `
-    <a class="vcard" href="#/item/${it.id}" style="--i:${Math.min(i, 14)}">
+    <a class="vcard" href="#/item/${it.id}" data-id="${it.id}" style="--i:${Math.min(i, 14)}">
       <div class="cover">${it.cover ? `<img src="${esc(it.cover)}" referrerpolicy="no-referrer" loading="lazy" onerror="this.remove()">` : ""}
         <div class="ph cat-${catColor(it.category)}" ${it.cover ? 'style="z-index:-1"' : ""}>${ico(it.media_type === "note" ? "file" : "play", "ic ph-ic")}</div>
         ${it.has_video
@@ -371,7 +515,7 @@ function gridHtml(items) {
       <div class="body">
         <div class="t">${it.starred ? ico("starFill", "ic star-ic") : ""}${esc(it.note_title || it.title)}</div>
         <div class="s">${esc(it.summary)}</div>
-        <div class="foot">${catChip(it.category)}
+        <div class="foot">${catChip(it.folder_name || "待分类")}
           ${it.difficulty ? `<span class="chip gray">${esc(it.difficulty)}</span>` : ""}
           ${it.media_type === "note" ? `<span class="chip gray">图文</span>` : ""}
           <span class="spacer"></span><span>${esc(it.author || "")}</span></div>
@@ -428,7 +572,7 @@ async function renderItem(id, tab) {
   if (it.source === "paste" && itemTab === "script" && !tab && curItem?.id !== id) itemTab = "summary";
   curItem = it;
   const n = it.note || {};
-  const cats = [...new Set([...(STATE.settings.categories || []), ...(STATE.stats.categories || []).map((c) => c.category)].filter(Boolean))];
+  const folders = STATE.folders || [];
   const [stText, stCls] = STATUS[it.status] || [it.status, "gray"];
   const isNote = it.media_type === "note";
   const tabs = [["script", "逐字稿"], ["summary", "总结稿"], ["mindmap", "思维导图"]];
@@ -463,7 +607,7 @@ async function renderItem(id, tab) {
       <div class="tabs-row">
         <div class="tabs itabs" id="itabs">${tabs.map(([k, l]) => `<button data-t="${k}" class="${itemTab === k ? "on" : ""}">${l}</button>`).join("")}</div>
         <span class="spacer"></span>
-        ${it.status === "done" ? `<span class="cat-pick"><label>分类</label><select id="catSel">${cats.map((c) => `<option ${c === n.category ? "selected" : ""}>${esc(c)}</option>`).join("")}${cats.includes(n.category) || !n.category ? "" : `<option selected>${esc(n.category)}</option>`}</select></span>` : ""}
+        ${it.status === "done" ? `<span class="cat-pick"><label>文件夹</label><select id="folderSel"><option value="" ${it.folder_id ? "" : "selected"}>待分类</option>${folders.map((f) => `<option value="${f.id}" ${String(it.folder_id) === String(f.id) ? "selected" : ""}>${esc(f.name)}</option>`).join("")}</select></span>` : ""}
       </div>
       <div id="tabBody"></div>
       <div class="foot-actions">
@@ -484,7 +628,12 @@ async function renderItem(id, tab) {
   $("#includeBtn") && ($("#includeBtn").onclick = async () => { await act("include"); toast("已收进收藏库"); refreshState(); renderItem(id, itemTab); });
   $("#reBtn") && ($("#reBtn").onclick = async () => { await act("reextract"); toast("已加入队列，稍等片刻"); location.hash = "#/process"; });
   $("#retryBtn") && ($("#retryBtn").onclick = async () => { await act("retry"); toast("已重新加入队列"); location.hash = "#/process"; });
-  $("#catSel") && ($("#catSel").onchange = async (e) => { await act("category", { value: e.target.value }); toast("分类已修改"); refreshState(); });
+  $("#folderSel") && ($("#folderSel").onchange = async (e) => {
+    const v = e.target.value;
+    await act("folder", { value: v === "" ? null : +v });
+    toast(v === "" ? "已移到待分类" : "已移动");
+    refreshState(); renderItem(id, itemTab);
+  });
   $("#delBtn").onclick = async () => {
     if (!confirm("删除这条笔记？对应的 MD 笔记文件也会一起删除。")) return;
     await act("delete"); toast("已删除"); location.hash = "#/library";
@@ -1032,7 +1181,7 @@ async function renderSettings() {
       <div class="field"><label>我关注的主题</label><textarea id="focus" rows="2">${esc(s.focus_topic)}</textarea>
         <div class="hint">AI 会按这个判断视频是否相关。想学别的（比如理财、健身）直接改这里。</div></div>
       <div class="field"><label class="check"><input type="checkbox" id="onlyRel" ${s.only_relevant ? "checked" : ""}> 和主题无关的视频自动收起（在「主题无关」里还能找回）</label></div>
-      <div class="field"><label>分类（用逗号分隔，AI 会优先从这里选）</label><input id="cats" value="${esc((s.categories || []).join("，"))}"></div>
+      <div class="hint">归类不再用这里的分类词，改成左侧你自己建的「文件夹」，AI 从里面挑；挑不出就放「待分类」。</div>
     </div>
     <div class="card form" style="margin-bottom:16px">
       <h2>语音转文字（在本机运行）</h2>
@@ -1150,7 +1299,8 @@ async function renderSettings() {
       deep_same: $("#deepSame").checked, deep_provider: $("#dProvider").value, deep_base_url: $("#dBase").value.trim(),
       deep_model: $("#dModel").value.trim(), deep_api_key: $("#dKey").value.trim(), deep_prompt: $("#dPrompt").value.trim(),
       deep_chunk_chars: +$("#dChunk").value,
-      focus_topic: $("#focus").value.trim(), only_relevant: $("#onlyRel").checked, categories: $("#cats").value,
+      focus_topic: $("#focus").value.trim(), only_relevant: $("#onlyRel").checked,
+      categories: STATE.settings.categories || [],  // 旧字段保留不动，归类已改用文件夹
       whisper_model: $("#wm").value, asr_engine: $("#engine").value, use_subtitles: $("#useSubs").checked, max_minutes: +$("#maxMin").value, use_hf_mirror: $("#mirror").checked,
       keep_video: $("#keepVideo").checked, library_dir: $("#libDir").value.trim(), browser: $("#browser").value, welcome_done: true,
     });

@@ -20,7 +20,7 @@ SYSTEM = """你是一位擅长把短视频内容整理成学习笔记的助手�
   "skip_reason": "",
   "relevant": true,
   "title": "一句话说清这条视频讲了什么（20字以内，不要照抄原标题里的话题标签）",
-  "category": "从这些分类里选最合适的一个：{categories}；都不合适可以自拟一个简短分类",
+  "folder": "从这些文件夹里选一个最归得进去的：{folders}；都不合适就填空字符串",
   "tags": ["3-5个关键词"],
   "difficulty": "入门 / 进阶 / 高级 选一个",
   "summary": "3-5 句话的详细总结",
@@ -39,6 +39,7 @@ SYSTEM = """你是一位擅长把短视频内容整理成学习笔记的助手�
 - 如果视频是广告带货、短剧剧情、唱歌跳舞、纯娱乐闲聊，或几乎没有实质信息，返回 {{"skip": true, "skip_reason": "简短原因"}}。
 - 如果有实质内容，但和用户关注的主题无关，"relevant" 填 false，其他字段照常填写。
 - 不要编造视频里没有的信息；转写里明显听错的专有名词（比如工具名）可以按常识纠正。
+- folder：只能从上面给的文件夹清单里原样挑一个（一字不差，包括标点）；确实没有一个合适就填空字符串 ""，不要自己造新名字。
 
 one_line / summary_md / logic_md 的写法：
 - one_line：一句话把结论说透，25 字以内，不要「本条视频讲述了」「作者认为」这类铺垫，直接陈述观点。
@@ -237,7 +238,8 @@ def normalize(d: dict) -> dict:
         "skip": False,
         "relevant": d.get("relevant") is not False,
         "title": str(d.get("title") or "").strip(),
-        "category": str(d.get("category") or "其他").strip() or "其他",
+        "category": str(d.get("folder") or d.get("category") or "待分类").strip() or "待分类",
+        "folder": str(d.get("folder") or "").strip(),
         "tags": _str_list(d.get("tags"))[:6],
         "difficulty": str(d.get("difficulty") or "").strip(),
         "summary": str(d.get("summary") or "").strip(),
@@ -264,11 +266,12 @@ def normalize(d: dict) -> dict:
     return note
 
 
-def extract(settings, title, author, transcript, kind="video"):
-    """返回 (笔记 dict, token 数)。"""
-    cats = "、".join(settings.get("categories") or [])
+def extract(settings, title, author, transcript, kind="video", folders=None):
+    """返回 (笔记 dict, token 数)。folders 是用户建的文件夹名清单，给 AI 归类用。"""
+    names = [f for f in (folders or []) if f]
+    flist = "、".join(names) if names else "（用户还没建文件夹，一律填空字符串）"
     messages = [
-        {"role": "system", "content": SYSTEM.format(focus=settings.get("focus_topic") or "不限", categories=cats)},
+        {"role": "system", "content": SYSTEM.format(focus=settings.get("focus_topic") or "不限", folders=flist)},
         {"role": "user", "content": USER.format(
             title=title or "（无）", author=author or "（未知）",
             label="图文笔记的正文和图片文字（【图N】是第 N 张图里识别出的文字）" if kind == "note" else "语音转文字稿",
@@ -280,6 +283,30 @@ def extract(settings, title, author, transcript, kind="video"):
     except Exception:
         raise LLMError("AI 返回的不是有效的 JSON：" + (text or "")[:200])
     return normalize(d), used
+
+
+CLASSIFY_SYSTEM = """你是资料整理助手。用户会给你一个文件夹清单，和一条笔记的标题与摘要，判断这条笔记最该放进哪个文件夹。
+
+只输出一个 JSON 对象，不要任何其他文字：{"folder": "文件夹名"}
+- folder 必须是清单里的名字，一个字都不能改；实在没有一个合适，就填 {"folder": ""}。
+- 不要自造新名字，不要解释理由。"""
+
+
+def classify(settings, folders, title, summary):
+    """给已有笔记判一个文件夹。返回 (文件夹名 或 "", token 数)。"""
+    names = [f for f in (folders or []) if f]
+    if not names:
+        raise LLMError("还没有文件夹，先建几个再归类")
+    messages = [
+        {"role": "system", "content": CLASSIFY_SYSTEM + "\n\n文件夹清单：" + "、".join(names)},
+        {"role": "user", "content": f"标题：{title or '（无）'}\n摘要：{(summary or '')[:600]}"},
+    ]
+    out, used = chat(settings, messages, temperature=0, max_tokens=300)
+    try:
+        name = str(parse_json(out).get("folder") or "").strip()
+    except Exception:
+        return "", used
+    return (name if name in names else ""), used
 
 
 MINDMAP_SYSTEM = """你是知识整理助手。把用户给的视频文字稿整理成一张思维导图，用 Markmap 的 Markdown 格式输出。

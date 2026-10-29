@@ -45,6 +45,13 @@ CREATE TABLE IF NOT EXISTS items (
   learned_at REAL
 );
 CREATE INDEX IF NOT EXISTS idx_items_status ON items(status);
+CREATE TABLE IF NOT EXISTS folders (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE,
+  sort INTEGER NOT NULL DEFAULT 0,
+  seen_at REAL NOT NULL DEFAULT 0,     -- 上次点开这个文件夹的时间，用来算小红点
+  created_at REAL NOT NULL
+);
 """
 
 _local = threading.local()
@@ -68,6 +75,7 @@ EXTRA_COLUMNS = {
     "media_type": "TEXT",      # video / note（图文）
     "images_json": "TEXT",     # 图文的图片（相对于笔记目录的路径列表）
     "mindmap": "TEXT",         # Markmap 文本，独立生成，不再依赖精读
+    "folder_id": "INTEGER",    # 所属文件夹；NULL 就是「待分类」
 }
 
 
@@ -86,6 +94,19 @@ def init():
                 mm = ""
             if mm:
                 conn().execute("UPDATE items SET mindmap=? WHERE id=?", (mm, r["id"]))
+        # 文件夹表还是空的：把老版本的「分类」直接升格成文件夹，不调 AI、不花钱
+        if conn().execute("SELECT COUNT(*) FROM folders").fetchone()[0] == 0:
+            now = time.time()
+            rows = conn().execute(
+                "SELECT category, COUNT(*) n FROM items WHERE category IS NOT NULL AND category<>'' "
+                "GROUP BY category ORDER BY MIN(id)").fetchall()
+            for i, r in enumerate(rows):
+                cur = conn().execute(
+                    "INSERT OR IGNORE INTO folders(name,sort,seen_at,created_at) VALUES(?,?,?,?)",
+                    (r["category"], i, now, now))
+                if cur.lastrowid:
+                    conn().execute("UPDATE items SET folder_id=? WHERE category=?",
+                                   (cur.lastrowid, r["category"]))
         # 程序上次被强制关掉时，卡在中间状态的条目放回队列
         conn().execute(
             f"UPDATE items SET status='queued' WHERE status IN ({','.join('?' * len(ACTIVE))})", ACTIVE)
@@ -144,7 +165,9 @@ def update(item_id, **fields):
 
 
 def get(item_id):
-    return _row(conn().execute("SELECT * FROM items WHERE id=?", (item_id,)).fetchone())
+    return _row(conn().execute(
+        "SELECT items.*, (SELECT name FROM folders WHERE id=items.folder_id) AS folder_name "
+        "FROM items WHERE id=?", (item_id,)).fetchone())
 
 
 def delete(item_id):
@@ -158,14 +181,20 @@ def next_queued():
         "SELECT * FROM items WHERE status='queued' ORDER BY id LIMIT 1").fetchone())
 
 
-def list_items(status=None, category=None, q=None, learned=None, starred=None, limit=1000):
+def list_items(status=None, category=None, q=None, learned=None, starred=None, folder=None, limit=1000):
     sql = ("SELECT id,source,aweme_id,url,local_path,title,author,duration,cover,status,reason,category,learned,starred,"
+           "folder_id,(SELECT name FROM folders WHERE id=items.folder_id) AS folder_name,"
            "created_at,updated_at,note_json,media_type,(deep_json IS NOT NULL) AS has_deep FROM items WHERE 1=1")
     args = []
     if status:
         statuses = status.split(",")
         sql += f" AND status IN ({','.join('?' * len(statuses))})"
         args += statuses
+    if folder == "none":
+        sql += " AND folder_id IS NULL"
+    elif folder not in (None, "", "all"):
+        sql += " AND folder_id=?"
+        args.append(int(folder))
     if category:
         sql += " AND category=?"
         args.append(category)
@@ -202,3 +231,108 @@ def stats():
     starred = c.execute("SELECT COUNT(*) FROM items WHERE status='done' AND starred=1").fetchone()[0]
     return {"by_status": by_status, "categories": cats, "learned": learned, "starred": starred,
             "total": sum(by_status.values())}
+
+
+# ------------------------------------------------------------------ 文件夹
+def list_folders():
+    """所有文件夹，带条数和「有没有新笔记」（比上次点开的时间新就亮小红点）。"""
+    out = []
+    for r in conn().execute(
+            "SELECT f.id, f.name, f.sort, f.seen_at,"
+            " (SELECT COUNT(*) FROM items WHERE folder_id=f.id AND status='done') AS n,"
+            " (SELECT MAX(created_at) FROM items WHERE folder_id=f.id AND status='done') AS last_at"
+            " FROM folders f ORDER BY f.sort, f.id"):
+        d = dict(r)
+        d["unread"] = bool(d["last_at"] and d["last_at"] > (d["seen_at"] or 0))
+        d.pop("last_at", None)
+        out.append(d)
+    return out
+
+
+def unclassified_count():
+    return conn().execute(
+        "SELECT COUNT(*) FROM items WHERE status='done' AND folder_id IS NULL").fetchone()[0]
+
+
+def folder_add(name):
+    """新建文件夹，返回 id；重名直接返回已有的 id。"""
+    name = (name or "").strip()[:40]
+    if not name:
+        raise ValueError("文件夹名字不能为空")
+    with _write_lock:
+        c = conn()
+        r = c.execute("SELECT id FROM folders WHERE name=?", (name,)).fetchone()
+        if r:
+            return r["id"], False
+        nxt = (c.execute("SELECT COALESCE(MAX(sort),-1)+1 FROM folders").fetchone()[0])
+        now = time.time()
+        cur = c.execute("INSERT INTO folders(name,sort,seen_at,created_at) VALUES(?,?,?,?)",
+                        (name, nxt, now, now))
+        c.commit()
+        return cur.lastrowid, True
+
+
+def folder_rename(fid, name):
+    name = (name or "").strip()[:40]
+    if not name:
+        raise ValueError("文件夹名字不能为空")
+    with _write_lock:
+        conn().execute("UPDATE folders SET name=? WHERE id=?", (name, fid))
+        conn().execute("UPDATE items SET category=? WHERE folder_id=?", (name, fid))
+        conn().commit()
+
+
+def folder_delete(fid):
+    """删文件夹，里面的笔记退回「待分类」（笔记和 MD 文件都不动）。返回退回的条数。"""
+    with _write_lock:
+        c = conn()
+        n = c.execute("SELECT COUNT(*) FROM items WHERE folder_id=?", (fid,)).fetchone()[0]
+        c.execute("UPDATE items SET folder_id=NULL, category='待分类' WHERE folder_id=?", (fid,))
+        c.execute("DELETE FROM folders WHERE id=?", (fid,))
+        c.commit()
+        return n
+
+
+def folder_reorder(ids):
+    with _write_lock:
+        c = conn()
+        for i, fid in enumerate(ids):
+            c.execute("UPDATE folders SET sort=? WHERE id=?", (i, int(fid)))
+        c.commit()
+
+
+def folder_seen(fid):
+    with _write_lock:
+        conn().execute("UPDATE folders SET seen_at=? WHERE id=?", (time.time(), fid))
+        conn().commit()
+
+
+def folder_id_by_name(name):
+    """按名字找文件夹 id；找不到返回 None（调用方据此落到「待分类」）。"""
+    name = (name or "").strip()
+    if not name:
+        return None
+    r = conn().execute("SELECT id FROM folders WHERE name=?", (name,)).fetchone()
+    return r["id"] if r else None
+
+
+def move_to_folder(item_id, fid):
+    """移动笔记；同时把 category 同步成文件夹名，导出的 MD 和旧界面才不会打架。"""
+    with _write_lock:
+        c = conn()
+        name = "待分类"
+        if fid:
+            r = c.execute("SELECT name FROM folders WHERE id=?", (fid,)).fetchone()
+            if not r:
+                return
+            name = r["name"]
+        c.execute("UPDATE items SET folder_id=?, category=?, updated_at=? WHERE id=?",
+                  (fid, name, time.time(), item_id))
+        c.commit()
+
+
+def classify_targets(limit=50):
+    """待分类里已经有笔记的条目，供 AI 批量归类。"""
+    return [_row(r) for r in conn().execute(
+        "SELECT * FROM items WHERE status='done' AND folder_id IS NULL ORDER BY id LIMIT ?",
+        (limit,)).fetchall()]
