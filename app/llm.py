@@ -12,8 +12,6 @@ MAX_CHARS = 6000  # 文字稿太长就截断，控制花费
 
 SYSTEM = """你是一位擅长把短视频内容整理成学习笔记的助手。你会收到一条抖音视频的语音转文字稿，或者一条抖音图文笔记的正文和图片里识别出的文字（都可能有错别字或断行，请按上下文理解），需要提炼成结构化笔记。
 
-用户关注的主题：{focus}
-
 请严格只输出一个 JSON 对象，不要输出任何其他文字，格式如下：
 {{
   "skip": false,
@@ -37,9 +35,9 @@ SYSTEM = """你是一位擅长把短视频内容整理成学习笔记的助手�
 
 规则：
 - 如果视频是广告带货、短剧剧情、唱歌跳舞、纯娱乐闲聊，或几乎没有实质信息，返回 {{"skip": true, "skip_reason": "简短原因"}}。
-- 如果有实质内容，但和用户关注的主题无关，"relevant" 填 false，其他字段照常填写。
+- "relevant" 一律填 true（主题筛选功能已停用，不再按主题判断相关性）。
 - 不要编造视频里没有的信息；转写里明显听错的专有名词（比如工具名）可以按常识纠正。
-- folder：只能从上面给的文件夹清单里原样挑一个（一字不差，包括标点）；确实没有一个合适就填空字符串 ""，不要自己造新名字。
+- folder：只能从上面给的文件夹清单里原样挑一个（一字不差，包括标点）；确实没有一个合适就填空字符串 ""，不要自己造新名字。@@RULES@@
 
 one_line / summary_md / logic_md 的写法：
 - one_line：一句话把结论说透，25 字以内，不要「本条视频讲述了」「作者认为」这类铺垫，直接陈述观点。
@@ -66,6 +64,21 @@ USER = """标题：{title}
 {transcript}
 
 请提炼成学习笔记。"""
+
+RULES_ANCHOR = "@@RULES@@"   # SYSTEM 里的占位符，格式化之后再替换，免得用户写的花括号把它冲掉
+
+
+def rules_block(rules):
+    """把用户自己写的分类规则拼成提示词片段。没写就返回空字符串，提示词保持原样。"""
+    text = (rules or "").strip()
+    if not text:
+        return ""
+    return (
+        "\n\n用户自己写的分类规则（用来理解每个文件夹到底收什么内容，判断 folder 时按这个来）：\n"
+        + text[:1500]
+        + "\n注意：上面只是想让你明白归类意图。folder 最终必须从文件夹清单里原样取一个名字，"
+          "不要使用规则里提到、但清单里没有的名字。"
+    )
 
 
 class LLMError(Exception):
@@ -270,8 +283,9 @@ def extract(settings, title, author, transcript, kind="video", folders=None):
     """返回 (笔记 dict, token 数)。folders 是用户建的文件夹名清单，给 AI 归类用。"""
     names = [f for f in (folders or []) if f]
     flist = "、".join(names) if names else "（用户还没建文件夹，一律填空字符串）"
+    sys_prompt = SYSTEM.format(folders=flist).replace(RULES_ANCHOR, rules_block(settings.get("folder_rules")))
     messages = [
-        {"role": "system", "content": SYSTEM.format(focus=settings.get("focus_topic") or "不限", folders=flist)},
+        {"role": "system", "content": sys_prompt},
         {"role": "user", "content": USER.format(
             title=title or "（无）", author=author or "（未知）",
             label="图文笔记的正文和图片文字（【图N】是第 N 张图里识别出的文字）" if kind == "note" else "语音转文字稿",
@@ -297,8 +311,10 @@ def classify(settings, folders, title, summary):
     names = [f for f in (folders or []) if f]
     if not names:
         raise LLMError("还没有文件夹，先建几个再归类")
+    sys_prompt = (CLASSIFY_SYSTEM + "\n\n文件夹清单：" + "、".join(names)
+                  + rules_block(settings.get("folder_rules")))
     messages = [
-        {"role": "system", "content": CLASSIFY_SYSTEM + "\n\n文件夹清单：" + "、".join(names)},
+        {"role": "system", "content": sys_prompt},
         {"role": "user", "content": f"标题：{title or '（无）'}\n摘要：{(summary or '')[:600]}"},
     ]
     out, used = chat(settings, messages, temperature=0, max_tokens=300)

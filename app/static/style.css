@@ -339,6 +339,8 @@ details summary { cursor: pointer; color: var(--link); }
   outline: none; transition: border-color .2s var(--ease), box-shadow .2s var(--ease); }
 .panels textarea:focus, .field input:focus, .field select:focus, .field textarea:focus, .cq textarea:focus, .modal-card textarea:focus {
   border-color: var(--accent); box-shadow: 0 0 0 4px rgba(0, 113, 227, .18); }
+/* 已停用但保留的设置项：内容照常可编辑，视觉上退一层 */
+.field textarea.off { background: var(--fill); color: var(--ink-3); }
 .field select { appearance: none; -webkit-appearance: none; padding-right: 36px;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%2386868b' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
   background-repeat: no-repeat; background-position: right 14px center; }

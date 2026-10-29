@@ -1228,11 +1228,11 @@ async function renderProcessLive() {
 }
 
 /* ---------------------------------------------------------------- 设置 */
-let settingsTab = "ai";   // 设置页当前标签：ai / asr / store / free
+let settingsTab = "ai";   // 设置页当前标签：ai / asr / store / rules
 async function renderSettings() {
   await refreshState();
   const s = STATE.settings, P = STATE.providers;
-  const TAB = [["ai", "AI 提炼"], ["asr", "语音转文字"], ["store", "存储与备份"], ["free", "免费方案"]];
+  const TAB = [["ai", "AI 提炼"], ["asr", "语音转文字"], ["store", "存储与备份"], ["rules", "处理规则"]];
   view.innerHTML = `
     <div class="head">
       <div><h1>设置</h1><div class="muted">所有设置和数据都只保存在你自己的电脑上</div></div>
@@ -1258,12 +1258,7 @@ async function renderSettings() {
       <div class="row"><button class="btn" id="testBtn">测试连接</button><span class="small" id="testRes"></span>
         <span class="spacer"></span><span class="muted small">累计消耗约 ${(s.tokens_used || 0).toLocaleString()} tokens</span></div>
     </div>
-    <div class="card form">
-      <h2>主题筛选</h2>
-      <div class="field"><label>我关注的主题</label><textarea id="focus" rows="2">${esc(s.focus_topic)}</textarea>
-        <div class="hint">AI 按这个判断视频是否与你相关。想换方向（比如理财、健身）直接改这里。</div></div>
-      <div class="field"><label class="check"><input type="checkbox" id="onlyRel" ${s.only_relevant ? "checked" : ""}> 和主题无关的视频自动收起（在「主题无关」里还能找回）</label></div>
-    </div>
+    ${freePlanHtml(s)}
     </div>
 
     <div class="pane" data-pane="asr" ${settingsTab === "asr" ? "" : "hidden"}>
@@ -1313,8 +1308,29 @@ async function renderSettings() {
     </div>
     </div>
 
-    <div class="pane" data-pane="free" ${settingsTab === "free" ? "" : "hidden"}>
-      ${freePlanHtml(s)}
+    <div class="pane" data-pane="rules" ${settingsTab === "rules" ? "" : "hidden"}>
+    <div class="card form">
+      <h2>分类规则</h2>
+      <p class="muted" style="margin:-6px 0 0">说说你心里的分法：什么内容该进哪个文件夹。这段会被带进两处判断——新视频提炼时，以及「待分类」里点 AI 自动归类时。</p>
+      <div class="field"><label>我想要的归法</label>
+        <textarea id="folderRules" rows="9" placeholder="一行一条，用 → 隔开「什么内容」和「文件夹名」。不会写就点下面那个按钮。">${esc(s.folder_rules)}</textarea>
+        <div class="hint">不写也行，但那样它只能照文件夹名字猜；写了它才按你的说法挑。</div></div>
+      <div class="field"><label>怎么写才管用</label>
+        <div class="hint">
+          · 一行一条，左边写「什么内容」，右边写「文件夹名」，中间用 → 隔开<br>
+          · 右边的名字要和左侧栏里的一字不差，对不上它就只能放空<br>
+          · 记得加一条「同时符合两条时怎么办」，它最容易卡在这里<br>
+          · 只对之后新提炼的、以及之后点自动归类的生效；已经归好的不会被挪动
+        </div></div>
+      <div class="row"><button class="btn" id="rulesDemo">插入示例格式</button><span class="small muted">用你现有的文件夹名套一份，插进去再改。</span></div>
+    </div>
+    <div class="card form">
+      <h2>主题筛选 <span class="chip gray">已停用</span></h2>
+      <p class="muted" style="margin:-6px 0 0">这块现在不参与任何判断：AI 不再因为「跟主题无关」把视频收起来，有实质内容的都会进收藏库。</p>
+      <div class="field"><label>我关注的主题（仅存档）</label>
+        <textarea id="focus" rows="2" class="off">${esc(s.focus_topic)}</textarea>
+        <div class="hint">内容照常保存，将来想重新启用就能接着用。</div></div>
+    </div>
     </div>`;
 
   const showKeyLink = () => {
@@ -1362,12 +1378,28 @@ async function renderSettings() {
   initPick("modelPick", "model", "mHint", "provider", "mLoad");
   setupBackup();
   setupFreePlan();
+  /* 分类规则：一键塞一份清单式示例，名字尽量在现有文件夹里找对得上的 */
+  $("#rulesDemo").onclick = () => {
+    const ta = $("#folderRules");
+    if (ta.value.trim() && !confirm("文本框里已经有内容了，用示例覆盖吗？")) return;
+    const n = (STATE.folders || []).map((f) => f.name);
+    const pick = (kw, d) => n.find((x) => kw.some((k) => x.includes(k))) || d;
+    ta.value = [
+      `- 讲原理、讲某个东西内部怎么运作的 → ${pick(["原理", "科普", "基础"], "（换成你的文件夹名）")}`,
+      `- 具体软件、插件、网站怎么操作的 → ${pick(["工具", "技术", "实操", "软件"], "（换成你的文件夹名）")}`,
+      `- 身体、疾病、饮食、运动这类 → ${pick(["健康", "健身", "运动", "养生"], "（换成你的文件夹名）")}`,
+      `- 同时符合上面两条的，放更具体的那个`,
+      `- 实在判断不出来的，留空，我自己分`,
+    ].join("\n");
+    ta.focus();
+    toast("已填入示例，把不对的改掉再保存");
+  };
   $("#openLib").onclick = () => api("/api/open", { what: "library" }).catch((e) => toast(e.message));
   $("#clearKey") && ($("#clearKey").onclick = async () => { if (confirm("清除已保存的 API Key？")) { await api("/api/settings", { clear_key: true }); toast("已清除"); renderSettings(); } });
   $("#saveBtn").onclick = async () => {
     await api("/api/settings", {
       provider: $("#provider").value, base_url: $("#baseUrl").value.trim(), model: $("#model").value.trim(), api_key: $("#apiKey").value.trim(),
-      focus_topic: $("#focus").value.trim(), only_relevant: $("#onlyRel").checked,
+      focus_topic: $("#focus").value.trim(), folder_rules: $("#folderRules").value.trim(),
       whisper_model: $("#wm").value, asr_engine: $("#engine").value, use_subtitles: $("#useSubs").checked, max_minutes: +$("#maxMin").value, use_hf_mirror: $("#mirror").checked,
       keep_video: $("#keepVideo").checked, library_dir: $("#libDir").value.trim(), browser: $("#browser").value, welcome_done: true,
     });

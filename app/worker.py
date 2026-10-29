@@ -200,7 +200,8 @@ class Worker:
                 db.update(it["id"], status="skipped", reason=note.get("skip_reason"), note=None)
                 self.log(f"[{it['id']}] 跳过：{note.get('skip_reason')}")
                 return
-            if not note["relevant"] and s.get("only_relevant", True) and it["source"] != "paste":
+            if (config.TOPIC_FILTER_ENABLED and not note["relevant"]
+                    and s.get("only_relevant", True) and it["source"] != "paste"):
                 notes.remove(it)
                 db.update(it["id"], status="irrelevant", note=note, category=note["category"], md_path=None,
                           reason="和你设置的关注主题无关，已收起")
