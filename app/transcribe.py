@@ -113,6 +113,9 @@ def _setup_hf(use_mirror):
     os.environ.setdefault("HF_HOME", str(MODELS_DIR / "hf"))
     if use_mirror:
         os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
+        # 镜像不代理 Xet 存储（cas-server.xethub.hf.co），新版 huggingface_hub 默认走 Xet 会 401，
+        # 关掉后回退到传统直链下载，经镜像可正常拉取。
+        os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
 
 
 def _faster_model(size, log):

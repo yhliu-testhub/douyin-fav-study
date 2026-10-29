@@ -390,7 +390,7 @@ class DeepRunner:
 
         fields = {"deep": deep}
         if it["source"] == "paste" or not it.get("note"):
-            # 粘贴进来的文稿没有走普通提炼，用精读结果补一份笔记，放进学习库
+            # 粘贴进来的文稿没有走普通提炼，用精读结果补一份笔记，放进收藏库
             note = {
                 "skip": False, "relevant": True, "title": deep["title"] or title,
                 "category": deep["category"] or "精读文稿", "tags": [], "difficulty": "",

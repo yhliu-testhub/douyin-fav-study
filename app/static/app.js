@@ -146,7 +146,7 @@ window.addEventListener("hashchange", () => {
   render();
 });
 
-/* ---------------------------------------------------------------- 学习库 */
+/* ---------------------------------------------------------------- 收藏库 */
 function depsBanner() {
   const d = STATE.deps; if (!d) return "";
   const miss = [];
@@ -183,8 +183,8 @@ async function renderLibrary(soft = false) {
   view.innerHTML = `
     ${bannerHtml()}
     <div class="head">
-      <div><h1>${libFilter.category ? `<i class="dot big-dot cat-${catColor(libFilter.category)}"></i>${esc(libFilter.category)}` : "学习库"}</h1>
-      <div class="muted">${libFilter.category ? `<a href="#/library">← 全部分类</a>` : "收藏过的干货，在这里真正学会"}</div></div>
+      <div><h1>${libFilter.category ? `<i class="dot big-dot cat-${catColor(libFilter.category)}"></i>${esc(libFilter.category)}` : "收藏库"}</h1>
+      ${libFilter.category ? `<div class="muted"><a href="#/library">← 全部分类</a></div>` : ""}</div>
       <div class="spacer"></div>
       <button class="btn" id="randBtn" title="随机抽一条还没学的">${ico("shuffle")}随机学一条</button>
       <button class="btn primary" id="addBtn">${ico("plus")}添加</button>
@@ -198,7 +198,6 @@ async function renderLibrary(soft = false) {
         <button data-v="1" class="${libFilter.learned === "1" ? "on" : ""}">已学</button>
         <button data-v="star" class="${libFilter.starred ? "on" : ""}">${ico("star", "ic sm")}星标</button>
       </div>
-      <button class="btn" id="pdfAll" title="把当前列表里的笔记合并导出成一个 PDF">导出 PDF</button>
     </div>
     <div class="grid" id="libGrid">${gridHtml(items)}</div>`;
   updateProgress(st, doneN, pct);
@@ -209,10 +208,6 @@ async function renderLibrary(soft = false) {
     $$("#segLearned button").forEach((x) => x.classList.toggle("on", x === b)); renderLibrary(true);
   });
   $("#addBtn").onclick = openAdd;
-  $("#pdfAll").onclick = () => {
-    if (!lastItems.length) return toast("当前列表是空的");
-    window.open(`/print?ids=${lastItems.map((x) => x.id).join(",")}`, "_blank");
-  };
   $("#randBtn").onclick = async () => {
     const todo = await api("/api/items?status=done&learned=0");
     if (!todo.length) return toast("全部学完啦 🎉");
@@ -236,7 +231,7 @@ function gridHtml(items) {
     if (libFilter.q || libFilter.learned || libFilter.starred)
       return emptyHtml("search", "没有符合条件的笔记", "换个关键词，或者切回「全部」看看。");
     if (any) return emptyHtml("inbox", "笔记还在路上", "视频处理完会自动出现在这里。", `<a class="btn" href="#/process">查看处理进度</a>`);
-    return emptyHtml("book", "学习库还是空的", "把抖音收藏里的干货搬进来，这里会变成你的知识库。",
+    return emptyHtml("book", "收藏库还是空的", "把抖音收藏里的干货搬进来，这里会变成你的知识库。",
       `<a class="btn primary" href="#/process">${ico("plus")}同步收藏夹</a><button class="btn" onclick="openAdd()">粘贴分享链接</button>`);
   }
   return items.map((it, i) => `
@@ -336,7 +331,7 @@ async function renderItem(id, tab) {
           <button class="btn" id="pdfBtn">${ico("file")}导出 PDF</button>
           <a class="btn" href="/api/items/${it.id}/md" style="text-align:center">${ico("download")}下载 MD</a>
           ${it.md_path ? `<button class="btn full" id="revealBtn">${ico("folder")}在文件夹中显示笔记</button>` : ""}
-          ${it.status === "irrelevant" ? `<button class="btn accent full" id="includeBtn">我觉得有用，收进学习库</button>` : ""}
+          ${it.status === "irrelevant" ? `<button class="btn accent full" id="includeBtn">我觉得有用，收进收藏库</button>` : ""}
           ${["failed", "skipped", "need_key", "irrelevant", "done"].includes(it.status) && it.transcript && it.source !== "paste"
             ? `<button class="btn full" id="reBtn">${ico("sparkles")}重新 AI 提炼</button>` : ""}
           ${it.status === "failed" && !it.transcript ? `<button class="btn full" id="retryBtn">重试</button>` : ""}
@@ -356,7 +351,7 @@ async function renderItem(id, tab) {
   $("#starBtn").onclick = async () => { await act("star", { value: !it.starred }); renderItem(id, itemTab); };
   $("#pdfBtn").onclick = () => window.open(`/print?ids=${id}`, "_blank");
   $("#revealBtn") && ($("#revealBtn").onclick = () => api("/api/open", { what: "item", id }).catch((e) => toast(e.message)));
-  $("#includeBtn") && ($("#includeBtn").onclick = async () => { await act("include"); toast("已收进学习库"); refreshState(); renderItem(id, itemTab); });
+  $("#includeBtn") && ($("#includeBtn").onclick = async () => { await act("include"); toast("已收进收藏库"); refreshState(); renderItem(id, itemTab); });
   $("#reBtn") && ($("#reBtn").onclick = async () => { await act("reextract"); toast("已加入队列，稍等片刻"); location.hash = "#/process"; });
   $("#retryBtn") && ($("#retryBtn").onclick = async () => { await act("retry"); toast("已重新加入队列"); location.hash = "#/process"; });
   $("#catSel") && ($("#catSel").onchange = async (e) => { await act("category", { value: e.target.value }); toast("分类已修改"); refreshState(); });
@@ -720,7 +715,7 @@ async function renderProcessLive() {
     let btns = "";
     if (it.status === "failed") btns = `<button class="btn sm" data-a="retry" data-id="${it.id}">重试</button>`;
     if (it.status === "need_key") btns = `<button class="btn sm" data-a="reextract" data-id="${it.id}">提炼</button>`;
-    if (it.status === "irrelevant") btns = `<button class="btn sm" data-a="include" data-id="${it.id}">收进学习库</button>`;
+    if (it.status === "irrelevant") btns = `<button class="btn sm" data-a="include" data-id="${it.id}">收进收藏库</button>`;
     if (["failed", "skipped", "irrelevant", "need_key", "queued"].includes(it.status)) btns += ` <button class="btn sm ghost" data-a="delete" data-id="${it.id}">删除</button>`;
     return `<div class="qrow"><div style="min-width:0">
         <div class="t"><a href="#/item/${it.id}" style="color:inherit">${esc(it.note_title || it.title || it.url || "（解析中）")}</a></div>

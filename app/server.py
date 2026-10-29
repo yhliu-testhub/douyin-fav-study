@@ -486,7 +486,7 @@ class Handler(BaseHTTPRequestHandler):
             act = b.get("action")
             if act in ("retry", "reextract", "include"):
                 if act == "include" and it.get("note"):
-                    # 用户认为"无关"的也值得学 → 直接收进学习库，不用再花钱提炼
+                    # 用户认为"无关"的也值得学 → 直接收进收藏库，不用再花钱提炼
                     it["note"]["relevant"] = True
                     path_ = notes.write(it)
                     db.update(item_id, status="done", note=it["note"], md_path=path_, reason=None)
