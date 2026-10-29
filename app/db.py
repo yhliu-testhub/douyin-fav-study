@@ -277,9 +277,13 @@ def folder_rename(fid, name):
     if not name:
         raise ValueError("文件夹名字不能为空")
     with _write_lock:
-        conn().execute("UPDATE folders SET name=? WHERE id=?", (name, fid))
-        conn().execute("UPDATE items SET category=? WHERE folder_id=?", (name, fid))
-        conn().commit()
+        c = conn()
+        dup = c.execute("SELECT id FROM folders WHERE name=? AND id<>?", (name, fid)).fetchone()
+        if dup:
+            raise ValueError("已经有同名文件夹了")
+        c.execute("UPDATE folders SET name=? WHERE id=?", (name, fid))
+        c.execute("UPDATE items SET category=? WHERE folder_id=?", (name, fid))
+        c.commit()
 
 
 def folder_delete(fid):

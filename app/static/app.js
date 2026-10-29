@@ -114,10 +114,11 @@ async function refreshState() {
 
 /* ---------------------------------------------------------------- 侧边栏文件夹 */
 let dragPayload = null;   // {type:"item"|"folder", id}
+let renamingId = null;    // 正在改名的文件夹 id（编辑中不重建侧栏，否则输入框会被冲掉）
 
 function renderNavFolders() {
   const el = $("#navFolders");
-  if (!el || dragPayload) return;  // 正在拖东西时别重建侧栏，会把拖拽打断
+  if (!el || dragPayload || renamingId) return;  // 正在拖东西/改名时别重建侧栏，会打断当前操作
   const fs = STATE.folders || [];
   const un = STATE.unclassified || 0;
   el.innerHTML = `
@@ -129,10 +130,13 @@ function renderNavFolders() {
     ${fs.map((f) => `
       <a class="fitem ${String(libFilter.folder) === String(f.id) ? "on" : ""}" href="#/library/f/${f.id}"
          data-fid="${f.id}" draggable="true" title="${esc(f.name)}">
-        <i class="dot cat-${catColor(f.name)}"></i><span class="fname">${esc(f.name)}</span>
+        <i class="dot cat-${catColor(f.name)}"></i><span class="fname" title="双击可改名">${esc(f.name)}</span>
         ${f.unread ? `<i class="ndot" title="有新笔记"></i>` : ""}
         <span class="fcount">${f.n}</span>
-        <button class="fdel" data-del="${f.id}" title="删除文件夹">✕</button>
+        <span class="fops">
+          <button class="fren-btn" data-ren="${f.id}" title="重命名">✎</button>
+          <button class="fdel" data-del="${f.id}" title="删除文件夹">✕</button>
+        </span>
       </a>`).join("")}
     ${fs.length ? "" : `<div class="fhint">还没有文件夹，点上面的 ＋ 建一个</div>`}`;
   bindFolders();
@@ -150,6 +154,16 @@ function bindFolders() {
       await refreshState();
     } catch (err) { toast(err.message); }
   };
+  $$("#navFolders .fren-btn").forEach((b) => b.onclick = (e) => {
+    e.preventDefault(); e.stopPropagation();
+    startRenameFolder(b.dataset.ren);
+  });
+  $$("#navFolders .fitem .fname").forEach((n) => n.ondblclick = (e) => {
+    const a = n.closest(".fitem");
+    if (!a || a.dataset.fid === "none") return;
+    e.preventDefault(); e.stopPropagation();
+    startRenameFolder(a.dataset.fid);
+  });
   $$("#navFolders .fdel").forEach((b) => b.onclick = async (e) => {
     e.preventDefault(); e.stopPropagation();
     const fid = b.dataset.del;
@@ -188,6 +202,52 @@ function bindFolders() {
       if (fid !== "none") return reorderFolder(p.id, fid);
     });
   });
+}
+
+/* 文件夹改名：把名字就地换成一个输入框，回车保存、Esc 取消、点到别处也算保存 */
+async function startRenameFolder(fid) {
+  const f = (STATE.folders || []).find((x) => String(x.id) === String(fid));
+  if (!f || renamingId) return;
+  const a = $(`#navFolders .fitem[data-fid="${fid}"]`);
+  const span = a && a.querySelector(".fname");
+  if (!span) return;
+  renamingId = fid;
+  a.setAttribute("draggable", "false");   // 改名时别让它还能被拖动
+  a.classList.add("editing");
+  const inp = document.createElement("input");
+  inp.className = "fren";
+  inp.type = "text";
+  inp.maxLength = 40;
+  inp.value = f.name;
+  span.replaceWith(inp);
+  inp.focus();
+  inp.select();
+  let done = false;
+  const finish = async (save) => {
+    if (done) return;
+    done = true;
+    const v = (inp.value || "").trim();
+    renamingId = null;
+    if (!save || !v || v === f.name) { await refreshState(); return; }
+    try {
+      await api(`/api/folders/${fid}`, { action: "rename", name: v });
+      toast(`已改名为「${v}」`);
+    } catch (err) { toast(err.message); }
+    await refreshState();
+    // 页面上其他位置（标题、卡片标签、详情页下拉）也可能写着旧名字，一并重画
+    const r = route();
+    if (r.name === "library") renderLibrary();
+    else if (r.name === "item") renderItem(r.id, r.tab);
+  };
+  inp.onkeydown = (e) => {
+    e.stopPropagation();
+    if (e.key === "Enter") { e.preventDefault(); finish(true); }
+    else if (e.key === "Escape") { e.preventDefault(); finish(false); }
+  };
+  inp.onblur = () => finish(true);
+  inp.onclick = (e) => { e.preventDefault(); e.stopPropagation(); };
+  inp.ondblclick = (e) => e.stopPropagation();
+  inp.onmousedown = (e) => e.stopPropagation();
 }
 
 async function moveItemToFolder(id, fid) {

@@ -91,10 +91,20 @@ input, textarea, select { font: inherit; color: var(--ink); }
 .folders .fitem[draggable="true"] { cursor: grab; }
 .folders .fitem[draggable="true"]:active { cursor: grabbing; }
 .folders .fitem .ndot { width: 7px; height: 7px; border-radius: 50%; background: #ff3b30; flex: none; }
-.folders .fitem .fdel { border: 0; background: transparent; color: var(--ink-4); font-size: 11px; line-height: 1;
-  padding: 2px 3px; border-radius: 4px; cursor: pointer; opacity: 0; }
-.folders .fitem:hover .fdel { opacity: .8; }
+.folders .fitem .fops { position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
+  display: none; align-items: center; gap: 1px; padding: 0 2px; border-radius: 5px; background: var(--fill); }
+.folders .fitem:hover .fops { display: flex; }
+.folders .fitem:hover .fcount { opacity: 0; }
+.folders .fitem .fcount { transition: opacity .1s; }
+.folders .fitem .fdel, .folders .fitem .fren-btn { border: 0; background: transparent; color: var(--ink-4);
+  font-size: 11px; line-height: 1; padding: 3px 4px; border-radius: 4px; cursor: pointer; }
+.folders .fitem .fren-btn { font-size: 12px; }
+.folders .fitem .fren-btn:hover { color: var(--accent); background: var(--accent-soft); }
 .folders .fitem .fdel:hover { color: var(--bad); background: var(--bad-soft); }
+.folders .fitem .fren { flex: 1; min-width: 0; font: inherit; font-size: 13px; font-weight: 600;
+  color: var(--ink); background: var(--card); border: 1px solid var(--accent); border-radius: 5px;
+  padding: 1px 5px; outline: none; }
+.folders .fitem.editing .fops, .folders .fitem.editing .fcount { display: none; }
 .folders .fitem.drop-on { background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent); color: var(--ink); }
 .folders .fitem.dragging { opacity: .4; }
 .folders .fhint { font-size: 11px; color: var(--ink-4); padding: 6px 8px; line-height: 1.5; }
