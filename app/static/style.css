@@ -358,6 +358,11 @@ details summary { cursor: pointer; color: var(--link); }
   font-size: 14px; transition: color .2s var(--ease); }
 .tabs button:hover { color: var(--ink); }
 .tabs button.on { color: var(--ink); border-bottom-color: var(--ink); font-weight: 600; }
+/* 设置页：一级标签 + 分页容器 */
+.stab { margin: 2px 0 20px; gap: 26px; }
+.stab button { font-size: 15px; }
+.pane[hidden] { display: none; }
+.pane > .card:not(:last-child) { margin-bottom: 16px; }
 .qlist { display: flex; flex-direction: column; }
 .qrow { display: grid; grid-template-columns: 1fr auto; gap: 12px; padding: 12px 4px; border-bottom: 1px solid var(--line); align-items: center; }
 .qrow:last-child { border-bottom: 0; }

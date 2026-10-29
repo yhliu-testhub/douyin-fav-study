@@ -1228,13 +1228,21 @@ async function renderProcessLive() {
 }
 
 /* ---------------------------------------------------------------- 设置 */
+let settingsTab = "ai";   // 设置页当前标签：ai / asr / store / free
 async function renderSettings() {
   await refreshState();
   const s = STATE.settings, P = STATE.providers;
+  const TAB = [["ai", "AI 提炼"], ["asr", "语音转文字"], ["store", "存储与备份"], ["free", "免费方案"]];
   view.innerHTML = `
-    <div class="head"><div><h1>设置</h1><div class="muted">所有设置和数据都只保存在你自己的电脑上</div></div></div>
-    ${freePlanHtml(s)}
-    <div class="card form" style="margin-bottom:16px">
+    <div class="head">
+      <div><h1>设置</h1><div class="muted">所有设置和数据都只保存在你自己的电脑上</div></div>
+      <div class="spacer"></div>
+      ${s.api_key_set ? `<button class="btn ghost" id="clearKey">清除已保存的 Key</button>` : ""}
+      <button class="btn primary" id="saveBtn">保存设置</button>
+    </div>
+    <div class="tabs stab" id="stabs">${TAB.map(([k, l]) => `<button data-st="${k}" class="${settingsTab === k ? "on" : ""}">${l}</button>`).join("")}</div>
+    <div class="pane" data-pane="ai" ${settingsTab === "ai" ? "" : "hidden"}>
+    <div class="card form">
       <h2>AI 提炼</h2>
       <div class="grid2">
         <div class="field"><label>AI 服务商</label><select id="provider">${Object.entries(P).map(([k, v]) => `<option value="${k}" ${s.provider === k ? "selected" : ""}>${esc(v.name)}</option>`).join("")}</select>
@@ -1250,37 +1258,16 @@ async function renderSettings() {
       <div class="row"><button class="btn" id="testBtn">测试连接</button><span class="small" id="testRes"></span>
         <span class="spacer"></span><span class="muted small">累计消耗约 ${(s.tokens_used || 0).toLocaleString()} tokens</span></div>
     </div>
-    <div class="card form" style="margin-bottom:16px">
-      <h2>精读（有人带着读）</h2>
-      <div class="field"><label class="check"><input type="checkbox" id="deepSame" ${s.deep_same ? "checked" : ""}> 精读和上面的 AI 提炼用同一个模型</label>
-        <div class="hint">日常批量提炼用便宜的模型（比如 DeepSeek），精读用更强的模型（比如 Claude）——取消勾选就能单独设置。</div></div>
-      <div id="deepCfg" ${s.deep_same ? "hidden" : ""}>
-        <div class="grid2">
-          <div class="field"><label>精读用的服务商</label><select id="dProvider">${Object.entries(P).map(([k, v]) => `<option value="${k}" ${s.deep_provider === k ? "selected" : ""}>${esc(v.name)}</option>`).join("")}</select>
-            <div class="hint" id="dKeyLink"></div></div>
-          <div class="field"><label>API Key ${s.deep_api_key_set ? `<span class="chip teal">已保存 ${esc(s.deep_api_key_hint)}</span>` : ""}</label>
-            <input id="dKey" type="password" placeholder="${s.deep_api_key_set ? "留空表示不修改" : "sk-ant-... / sk-..."}" autocomplete="off"></div>
-          <div class="field"><label>接口地址</label><input id="dBase" value="${esc(s.deep_base_url)}"></div>
-          <div class="field"><label>模型</label><div class="model-pick"><input id="dModel" value="${esc(s.deep_model)}" placeholder="选择或输入模型名" autocomplete="off">
-            <select id="dModelPick" title="从列表选择模型"></select></div>
-            <div class="hint"><span id="dmHint">点右边的箭头从列表选择；也可以直接输入。</span> <a href="javascript:void 0" id="dmLoad">刷新模型列表</a></div></div>
-        </div>
-        <div class="row" style="margin:12px 0 14px"><button class="btn" id="dTest">测试精读模型</button><span class="small" id="dTestRes"></span></div>
-      </div>
-      <div class="field"><label>精读提示词</label><textarea id="dPrompt" rows="4">${esc(s.deep_prompt)}</textarea>
-        <div class="hint">告诉 AI 你想怎么被带着读。输出格式（结论/大纲/概念/检查题/测验/Anki/思维导图）由程序固定，这里写学习要求就行。
-          <a href="javascript:void 0" id="dPromptReset">恢复默认</a></div></div>
-      <div class="field" style="max-width:340px"><label>文稿超过多少字就分段预读</label><input id="dChunk" type="number" min="3000" max="100000" step="1000" value="${s.deep_chunk_chars}">
-        <div class="hint">模型上下文小就调小。12000 字大约是 40 分钟的口播。</div></div>
-    </div>
-    <div class="card form" style="margin-bottom:16px">
-      <h2>学什么</h2>
+    <div class="card form">
+      <h2>主题筛选</h2>
       <div class="field"><label>我关注的主题</label><textarea id="focus" rows="2">${esc(s.focus_topic)}</textarea>
-        <div class="hint">AI 会按这个判断视频是否相关。想学别的（比如理财、健身）直接改这里。</div></div>
+        <div class="hint">AI 按这个判断视频是否与你相关。想换方向（比如理财、健身）直接改这里。</div></div>
       <div class="field"><label class="check"><input type="checkbox" id="onlyRel" ${s.only_relevant ? "checked" : ""}> 和主题无关的视频自动收起（在「主题无关」里还能找回）</label></div>
-      <div class="hint">归类不再用这里的分类词，改成左侧你自己建的「文件夹」，AI 从里面挑；挑不出就放「待分类」。</div>
     </div>
-    <div class="card form" style="margin-bottom:16px">
+    </div>
+
+    <div class="pane" data-pane="asr" ${settingsTab === "asr" ? "" : "hidden"}>
+    <div class="card form">
       <h2>语音转文字（在本机运行）</h2>
       <div class="grid2">
         <div class="field"><label>识别引擎</label><select id="engine">
@@ -1297,11 +1284,22 @@ async function renderSettings() {
       <div class="field"><label>图片文字识别（图文用）</label>
         <div class="${STATE.ocr?.backend ? "" : "banner warn"}" style="${STATE.ocr?.backend ? "" : "margin:0"}">${STATE.ocr?.backend ? `✓ ${esc(STATE.ocr.label)}（在本机运行，图片不上传）` : "还没安装文字识别组件：请重新运行一次安装脚本。没装的话，图文只会用正文文字。"}</div></div>
       <div class="field"><label class="check"><input type="checkbox" id="mirror" ${s.use_hf_mirror ? "checked" : ""}> 使用国内镜像下载模型（人在中国大陆时勾选；在海外不要勾）</label></div>
+    </div>
+    </div>
+
+    <div class="pane" data-pane="store" ${settingsTab === "store" ? "" : "hidden"}>
+    <div class="card form">
+      <h2>存储</h2>
+      <div class="field"><label>笔记保存位置（可以直接用 Obsidian 打开这个文件夹；留空 = 默认位置）</label>
+        <div class="row"><input id="libDir" value="${esc(s.library_dir)}" placeholder="${esc(STATE.library_dir)}" style="flex:1"><button class="btn" id="openLib">打开文件夹</button></div></div>
       <div class="field"><label class="check"><input type="checkbox" id="keepVideo" ${s.keep_video ? "checked" : ""}> 转录后保留视频文件（默认删除，节省空间）</label></div>
+      <div class="field"><label>用哪个浏览器登录抖音</label><select id="browser">
+        ${[["auto", "自动（先找 Edge，再找 Chrome）"], ["msedge", "Microsoft Edge"], ["chrome", "Google Chrome"], ["chromium", "内置 Chromium（需单独安装）"]]
+          .map(([k, l]) => `<option value="${k}" ${s.browser === k ? "selected" : ""}>${l}</option>`).join("")}</select></div>
     </div>
     <div class="card form" style="margin-bottom:16px" id="backupCard">
       <h2>备份与恢复</h2>
-      <p class="muted" style="margin:-6px 0 0">把全部数据（笔记、文字稿、精读、学习进度、设置）打包成一个文件。换电脑时，在新电脑上装好学习台，导入这个文件就恢复原样。
+      <p class="muted" style="margin:-6px 0 0">把全部数据（笔记、文字稿、文件夹、设置）打包成一个文件。换电脑时，在新电脑上装好学习台，导入这个文件就恢复原样。
         抖音登录状态和语音模型不打包：换电脑后重新扫码、模型会自动重新下载。</p>
       <div class="row" style="gap:12px">
         <a class="btn primary" id="bkDown" href="/api/backup?keys=1">${ico("download")}下载完整备份</a>
@@ -1313,44 +1311,23 @@ async function renderSettings() {
       <div class="hint" id="bkHint">备份文件里如果包含 AI Key，请当作密码一样保管，别发给别人。恢复会覆盖当前数据，恢复前程序会先自动把当前数据备份一份。</div>
       <div id="bkAuto"></div>
     </div>
-    <div class="card form" style="margin-bottom:16px">
-      <h2>存储与浏览器</h2>
-      <div class="field"><label>笔记保存位置（可以直接用 Obsidian 打开这个文件夹；留空 = 默认位置）</label>
-        <div class="row"><input id="libDir" value="${esc(s.library_dir)}" placeholder="${esc(STATE.library_dir)}" style="flex:1"><button class="btn" id="openLib">打开文件夹</button></div></div>
-      <div class="field"><label>用哪个浏览器登录抖音</label><select id="browser">
-        ${[["auto", "自动（先找 Edge，再找 Chrome）"], ["msedge", "Microsoft Edge"], ["chrome", "Google Chrome"], ["chromium", "内置 Chromium（需单独安装）"]]
-          .map(([k, l]) => `<option value="${k}" ${s.browser === k ? "selected" : ""}>${l}</option>`).join("")}</select></div>
     </div>
-    <div class="row"><span class="spacer"></span>${s.api_key_set ? `<button class="btn ghost" id="clearKey">清除已保存的 Key</button>` : ""}<button class="btn primary" id="saveBtn">保存设置</button></div>`;
+
+    <div class="pane" data-pane="free" ${settingsTab === "free" ? "" : "hidden"}>
+      ${freePlanHtml(s)}
+    </div>`;
 
   const showKeyLink = () => {
     const p = P[$("#provider").value];
     $("#keyLink").innerHTML = p.key_url ? `<a href="${esc(p.key_url)}" target="_blank" rel="noopener">去 ${esc(p.name)} 申请 Key →</a>` : "填写任意 OpenAI 兼容接口的地址和模型名";
   };
   showKeyLink();
-  const showDKeyLink = () => {
-    const p = P[$("#dProvider").value];
-    $("#dKeyLink").innerHTML = p.key_url ? `<a href="${esc(p.key_url)}" target="_blank" rel="noopener">去 ${esc(p.name)} 申请 Key →</a>` : "";
-  };
-  showDKeyLink();
-  $("#deepSame").onchange = (e) => { $("#deepCfg").hidden = e.target.checked; };
-  $("#dProvider").onchange = () => {
-    const p = P[$("#dProvider").value];
-    if (p.base_url) { $("#dBase").value = p.base_url; $("#dModel").value = p.model; }
-    modelCache.deep = null; fillPick("dModelPick", "dModel", p.models || [p.model].filter(Boolean), "dmHint", false);
-    showDKeyLink();
-  };
-  $("#dPromptReset").onclick = () => { $("#dPrompt").value = s.default_deep_prompt; };
-  $("#dTest").onclick = async () => {
-    $("#dTestRes").textContent = "测试中…";
-    const r = await api("/api/test_llm", { purpose: "deep", provider: $("#dProvider").value, base_url: $("#dBase").value, model: $("#dModel").value, api_key: $("#dKey").value });
-    if (r.ok) {
-      if (r.models?.length) modelCache.deep = r.models;
-      toast("连接成功，精读设置已自动保存");
-      await renderSettings();
-      $("#dTestRes").innerHTML = `<span style="color:var(--ok)">✓ 连接成功，已保存（AI 回复：${esc(r.reply)}）</span>`;
-    } else $("#dTestRes").innerHTML = `<span style="color:var(--bad)">✗ ${esc(r.error)}</span>`;
-  };
+  // 标签页切换：只切显示，不重绘，免得没保存的输入被冲掉
+  $$("#stabs button").forEach((b) => b.onclick = () => {
+    settingsTab = b.dataset.st;
+    $$("#stabs button").forEach((x) => x.classList.toggle("on", x === b));
+    $$(".pane").forEach((p) => { p.hidden = p.dataset.pane !== settingsTab; });
+  });
   $("#provider").onchange = () => {
     const p = P[$("#provider").value];
     if (p.base_url) { $("#baseUrl").value = p.base_url; $("#model").value = p.model; }
@@ -1368,24 +1345,21 @@ async function renderSettings() {
     } else $("#testRes").innerHTML = `<span style="color:var(--bad)">✗ ${esc(r.error)}</span>`;
   };
   // 模型下拉：有缓存用缓存，没有就用预设，并在后台去服务商拉一次真实列表
-  const initPick = (purpose, pickId, inputId, hintId, provId) => {
+  const initPick = (pickId, inputId, hintId, provId, loadId) => {
     const p = P[$("#" + provId).value] || {};
-    const cached = modelCache[purpose];
+    const cached = modelCache.main;
     fillPick(pickId, inputId, cached || p.models || [], hintId, !!cached);
     const load = async (quiet) => {
-      const body = purpose === "deep"
-        ? { purpose, provider: $("#dProvider").value, base_url: $("#dBase").value, api_key: $("#dKey").value }
-        : { purpose, provider: $("#provider").value, base_url: $("#baseUrl").value, api_key: $("#apiKey").value };
-      try { const r = await api("/api/models", body); modelCache[purpose] = r.models; fillPick(pickId, inputId, r.models, hintId, true);
-        if (!quiet) toast(`读取到 ${r.models.length} 个模型`); }
-      catch (e) { if (!quiet) toast(e.message, 4000); }
+      try {
+        const r = await api("/api/models", { provider: $("#provider").value, base_url: $("#baseUrl").value, api_key: $("#apiKey").value });
+        modelCache.main = r.models; fillPick(pickId, inputId, r.models, hintId, true);
+        if (!quiet) toast(`读取到 ${r.models.length} 个模型`);
+      } catch (e) { if (!quiet) toast(e.message, 4000); }
     };
-    $("#" + (purpose === "deep" ? "dmLoad" : "mLoad")).onclick = () => load(false);
-    const keySet = purpose === "deep" ? s.deep_api_key_set : s.api_key_set;
-    if (!cached && keySet && (purpose === "main" || !s.deep_same)) load(true);
+    $("#" + loadId).onclick = () => load(false);
+    if (!cached && s.api_key_set) load(true);
   };
-  initPick("main", "modelPick", "model", "mHint", "provider");
-  initPick("deep", "dModelPick", "dModel", "dmHint", "dProvider");
+  initPick("modelPick", "model", "mHint", "provider", "mLoad");
   setupBackup();
   setupFreePlan();
   $("#openLib").onclick = () => api("/api/open", { what: "library" }).catch((e) => toast(e.message));
@@ -1393,11 +1367,7 @@ async function renderSettings() {
   $("#saveBtn").onclick = async () => {
     await api("/api/settings", {
       provider: $("#provider").value, base_url: $("#baseUrl").value.trim(), model: $("#model").value.trim(), api_key: $("#apiKey").value.trim(),
-      deep_same: $("#deepSame").checked, deep_provider: $("#dProvider").value, deep_base_url: $("#dBase").value.trim(),
-      deep_model: $("#dModel").value.trim(), deep_api_key: $("#dKey").value.trim(), deep_prompt: $("#dPrompt").value.trim(),
-      deep_chunk_chars: +$("#dChunk").value,
       focus_topic: $("#focus").value.trim(), only_relevant: $("#onlyRel").checked,
-      categories: STATE.settings.categories || [],  // 旧字段保留不动，归类已改用文件夹
       whisper_model: $("#wm").value, asr_engine: $("#engine").value, use_subtitles: $("#useSubs").checked, max_minutes: +$("#maxMin").value, use_hf_mirror: $("#mirror").checked,
       keep_video: $("#keepVideo").checked, library_dir: $("#libDir").value.trim(), browser: $("#browser").value, welcome_done: true,
     });
@@ -1508,7 +1478,7 @@ function freePlanHtml(s) {
   return `<div class="card form free-card" style="margin-bottom:16px" id="freeCard">
     <div class="row"><h2 style="margin:0">免费方案</h2><span class="chip">推荐新手</span><span class="spacer"></span>
       ${cur ? `<span class="chip teal">✓ 正在使用：${esc(cur.name)} · ${esc(s.model)}</span>` : ""}</div>
-    <p class="muted" style="margin:-6px 0 0">用你自己账号的免费额度，不花钱。免费模型够日常提炼用；想要更好的效果（尤其是「带我精读」），可以在下面换成付费模型。</p>
+    <p class="muted" style="margin:-6px 0 0">用你自己账号的免费额度，不花钱。免费模型够日常提炼用；想要更稳的效果，可以到「AI 提炼」里换成付费模型。</p>
     <div class="plans">${Object.entries(FP).map(([k, p]) => `
       <button class="plan ${freePick === k ? "on" : ""} ${s.free_plan === k ? "using" : ""}" data-plan="${k}">
         <div class="row" style="gap:6px"><b>${esc(p.name)}</b><span class="chip ${p.tag === "海外" ? "gray" : ""}">${esc(p.tag)}</span></div>
