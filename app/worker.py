@@ -139,6 +139,43 @@ class Worker:
         self.state["stage"] = msg
         self.log(f"[{it['id']}] {msg}")
 
+    # ------------------------------------------------------------ 主题筛选（先判）
+    def _topic_gate(self, it, d, s):
+        """下载和转录之前先判一次：这条要不要做笔记。返回跳过原因；None 表示照常处理。
+
+        判错的代价不对称：误判成「纳入」只是多花一次转录，误判成「跳过」会丢内容，
+        所以任何异常、解析失败、拿不准，一律按纳入处理。
+        """
+        if it.get("source") in ("local", "paste") or it.get("no_gate"):
+            return None   # 本地导入没有可靠信息可判；用户点过「生成笔记」的也不再拦
+        if not (s.get("topic_include") or "").strip() and not (s.get("topic_exclude") or "").strip():
+            return None   # 两列都空 = 这个功能没开
+        kind = "note" if d.get("is_note") else "video"
+        self._stage(it, "fetching", f"先判主题：{(d.get('title') or '')[:24]}")
+        try:
+            keep, why, used = llm.judge_topic(s, d.get("title"), d.get("author"),
+                                              d.get("duration") or 0, kind, d.get("desc"))
+        except Exception as e:
+            self.log(f"[{it['id']}] 主题判定没成功，按纳入处理：{e}")
+            return None
+        if used:
+            config.add_tokens(used)
+        if keep:
+            self.log(f"[{it['id']}] 主题判定：纳入" + (f"（{why}）" if why else ""))
+            return None
+        return f"按主题筛选跳过：{why or '命中「不要纳入」'}"
+
+    def _mark_topic_skipped(self, it, media, reason):
+        """只留标题和视频，不转录、不总结。标题从原始描述里洗一下，去掉话题标签。"""
+        is_note = it.get("media_type") == "note"
+        title = notes.clean_title(it.get("title") or "",
+                                  f"抖音{'图文' if is_note else '视频'} {it.get('aweme_id') or it['id']}")
+        db.update(it["id"], title=title, status="video_only", reason=reason, note=None)
+        it["title"] = title
+        if isinstance(media, Path):
+            self._rename_video(it, media, title)   # 视频文件也跟着改成标题名
+        self.log(f"[{it['id']}] {reason}（保留标题和视频，要笔记可在详情页点「生成笔记」）")
+
     def _process_one(self, it):
         s = config.load()
         self.prog.begin(it, bool(it.get("transcript")), transcribe.pick_engine(s.get("asr_engine", "auto")))
@@ -156,6 +193,9 @@ class Worker:
             if not it.get("transcript"):
                 media = self._get_media(it, s)
                 if media is None:
+                    return
+                if it.get("topic_skip"):   # 命中「不要纳入」：只留标题和视频，不转录不总结
+                    self._mark_topic_skipped(it, media, it["topic_skip"])
                     return
                 if isinstance(media, dict) and "note" in media:  # 图文：下载图片 + 识别图片文字
                     if not self._process_note(it, media["note"]):
@@ -200,13 +240,6 @@ class Worker:
             if note.get("skip"):
                 db.update(it["id"], status="skipped", reason=note.get("skip_reason"), note=None)
                 self.log(f"[{it['id']}] 跳过：{note.get('skip_reason')}")
-                return
-            if (config.TOPIC_FILTER_ENABLED and not note["relevant"]
-                    and s.get("only_relevant", True) and it["source"] != "paste"):
-                notes.remove(it)
-                db.update(it["id"], status="irrelevant", note=note, category=note["category"], md_path=None,
-                          reason="和你设置的关注主题无关，已收起")
-                self.log(f"[{it['id']}] 和关注主题无关，已收起：{note['title']}")
                 return
             it["note"] = note
             path = notes.write(it)
@@ -276,6 +309,12 @@ class Worker:
             db.update(it["id"], status="skipped", reason="广告视频")
             self.log(f"[{it['id']}] 跳过：广告")
             return None
+
+        # 先判：还没下载、没转录，先用标题和作者判断这条要不要做笔记
+        reason = self._topic_gate(it, d, s)
+        if reason:
+            it["topic_skip"] = reason
+
         if d.get("is_note"):
             db.update(it["id"], media_type="note")
             it["media_type"] = "note"
@@ -284,7 +323,7 @@ class Worker:
                 return None
             return {"note": d}
 
-        if s.get("use_subtitles", True) and d.get("subtitle_urls"):
+        if not it.get("topic_skip") and s.get("use_subtitles", True) and d.get("subtitle_urls"):
             for su in d["subtitle_urls"]:
                 try:
                     raw = b.fetch_text(su)
@@ -294,6 +333,15 @@ class Worker:
                 if len(text) >= 30:
                     self.log(f"[{it['id']}] 视频自带字幕，直接使用（跳过下载和转写）")
                     return {"text": text, "segments": transcribe.subtitle_segments(raw)}
+
+        # 之前下过的视频还在，就别再下一遍（补转录、重新处理时省时间）
+        for cand in (it.get("local_path"), config.MEDIA_DIR / f"{aweme_id}.mp4"):
+            if not cand:
+                continue
+            p = Path(cand)
+            if p.is_file() and p.stat().st_size > 1024:
+                self.log(f"[{it['id']}] 已有本地视频，跳过下载")
+                return p
 
         self._stage(it, "downloading", f"下载视频：{(it.get('title') or '')[:30]}")
         dest = config.MEDIA_DIR / f"{aweme_id}.mp4"

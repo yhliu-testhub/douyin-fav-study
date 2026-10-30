@@ -50,7 +50,8 @@ const catChip = (name, extra = "") => `<span class="chip cat cat-${catColor(name
 const STATUS = {
   queued: ["排队中", "gray"], fetching: ["读取信息", "teal"], downloading: ["下载中", "teal"],
   transcribing: ["转文字中", "teal"], extracting: ["AI 提炼中", "teal"], done: ["已完成", "teal"],
-  need_key: ["待提炼", "warn"], irrelevant: ["主题无关", "gray"], skipped: ["已跳过", "gray"], failed: ["失败", "bad"],
+  need_key: ["待提炼", "warn"], irrelevant: ["主题无关", "gray"], skipped: ["已跳过", "gray"],
+  video_only: ["仅收藏", "gray"], failed: ["失败", "bad"],
 };
 const ACTIVE = ["queued", "fetching", "downloading", "transcribing", "extracting"];
 
@@ -101,8 +102,8 @@ async function refreshState() {
   const st = STATE.stats, w = STATE.worker;
   const queued = ACTIVE.reduce((n, k) => n + (st.by_status[k] || 0), 0);
   const q = $("#navQueue"); q.hidden = !queued; q.textContent = queued;
-  const doneN = st.by_status.done || 0, nl = $("#navLib");
-  if (nl) { nl.hidden = !doneN; nl.textContent = doneN; nl.title = `收藏库里已有 ${doneN} 条笔记`; }
+  const doneN = (st.by_status.done || 0) + (st.by_status.video_only || 0), nl = $("#navLib");
+  if (nl) { nl.hidden = !doneN; nl.textContent = doneN; nl.title = `收藏库里已有 ${doneN} 条`; }
   const sf = $("#sideStatus");
   const pg = STATE.progress || {}, dp = STATE.deep || {};
   const parts = [];
@@ -347,7 +348,7 @@ function bannerHtml() {
 }
 
 async function renderLibrary(soft = false) {
-  const params = new URLSearchParams({ status: "done" });
+  const params = new URLSearchParams({ status: "done,video_only" });
   if (libFilter.q) params.set("q", libFilter.q);
   if (libFilter.starred) params.set("starred", "1");
   if (libFilter.folder) params.set("folder", libFilter.folder);
@@ -732,7 +733,7 @@ function detailHtml(items) {
     <th class="c-video">视频</th>
     <th>链接</th></tr></thead><tbody>
     ${items.map((it) => `<tr data-id="${it.id}">
-      <td class="c-title"><a href="#/item/${it.id}">${it.starred ? ico("starFill", "ic sm star-ic") : ""}${esc(it.note_title || it.title || "未命名")}</a></td>
+      <td class="c-title"><a href="#/item/${it.id}">${it.starred ? ico("starFill", "ic sm star-ic") : ""}${esc(it.note_title || it.title || "未命名")}</a>${it.status === "video_only" ? `<span class="chip gray" style="margin-left:6px">仅收藏</span>` : ""}</td>
       <td>${esc(it.author || "")}</td>
       <td>${catChip(it.folder_name || "待分类")}</td>
       <td class="c-date">${fmtDate(it.created_at)}</td>
@@ -766,8 +767,9 @@ function gridHtml(items) {
         ${it.duration ? `<span class="dur">${fmtDur(it.duration)}</span>` : ""}</div>
       <div class="body">
         <div class="t">${it.starred ? ico("starFill", "ic star-ic") : ""}${esc(it.note_title || it.title)}</div>
-        <div class="s">${esc(it.summary)}</div>
+        <div class="s">${esc(it.summary || (it.status === "video_only" ? "按主题只保留了视频，没有转录和总结" : ""))}</div>
         <div class="foot">${catChip(it.folder_name || "待分类")}
+          ${it.status === "video_only" ? `<span class="chip gray">仅收藏</span>` : ""}
           ${it.difficulty ? `<span class="chip gray">${esc(it.difficulty)}</span>` : ""}
           ${it.media_type === "note" ? `<span class="chip gray">图文</span>` : ""}
           <span class="spacer"></span><span>${esc(it.author || "")}</span></div>
@@ -850,7 +852,6 @@ async function renderItem(id, tab) {
         <span class="muted">${esc(it.author || "未知作者")}${it.duration ? " · " + fmtDur(it.duration) : ""}${it.created_at ? " · 收藏于 " + fmtDate(it.created_at) : ""}</span>
         ${(n.tags || []).map((t) => `<span class="muted">#${esc(t)}</span>`).join(" ")}
       </div>
-      ${it.title && it.title !== n.title && it.source !== "paste" ? `<div class="muted small">原标题：${esc(it.title)}</div>` : ""}
       <div class="act-row">
         <button class="btn sm ghost" id="delBtn" style="color:var(--bad)">${ico("x")}删除笔记</button>
         <button class="btn sm" id="pdfBtn">${ico("file")}导出 PDF</button>
@@ -858,11 +859,11 @@ async function renderItem(id, tab) {
         ${it.md_path ? `<button class="btn sm" id="revealBtn">${ico("folder")}定位笔记文件</button>` : ""}
         ${it.has_video ? `<button class="btn sm" id="locVideoBtn" data-loc-video="${it.id}">${ico("folder")}定位视频文件</button>` : ""}
       </div>
-      ${it.reason ? `<div class="banner warn" style="margin-top:14px">${esc(it.reason)}</div>` : ""}
+      ${it.reason && it.status !== "video_only" ? `<div class="banner warn" style="margin-top:14px">${esc(it.reason)}</div>` : ""}
       <div class="tabs-row">
         <div class="tabs itabs" id="itabs">${tabs.map(([k, l]) => `<button data-t="${k}" class="${itemTab === k ? "on" : ""}">${l}</button>`).join("")}</div>
         <span class="spacer"></span>
-        ${it.status === "done" ? `<span class="cat-pick"><label>文件夹</label><select id="folderSel"><option value="" ${it.folder_id ? "" : "selected"}>待分类</option>${folders.map((f) => `<option value="${f.id}" ${String(it.folder_id) === String(f.id) ? "selected" : ""}>${esc(f.name)}</option>`).join("")}</select></span>` : ""}
+        ${["done", "video_only"].includes(it.status) ? `<span class="cat-pick"><label>文件夹</label><select id="folderSel"><option value="" ${it.folder_id ? "" : "selected"}>待分类</option>${folders.map((f) => `<option value="${f.id}" ${String(it.folder_id) === String(f.id) ? "selected" : ""}>${esc(f.name)}</option>`).join("")}</select></span>` : ""}
       </div>
       <div id="tabBody"></div>
       <div class="foot-actions">
@@ -921,6 +922,23 @@ function renderTab() {
   const it = curItem, el = $("#tabBody");
   if (!el) return;
   el.classList.remove("fade-in"); void el.offsetWidth; el.classList.add("fade-in");
+  if (it.status === "video_only") {   // 按主题只留了视频，还没有文字稿
+    el.innerHTML = `<div class="only-box">
+      <div><b>这条按主题规则只保留了视频，没有做逐字稿和总结。</b></div>
+      <div class="muted small">${esc(it.reason || "")}</div>
+      <div class="muted small">需要的话可以补做：视频已经在本机，转录在本机跑，不重新下载、也不会再抓一遍。</div>
+      <button class="btn primary" id="genNoteBtn">${ico("sparkles")}生成笔记（转录 + 总结）</button>
+    </div>`;
+    $("#genNoteBtn").onclick = async () => {
+      $("#genNoteBtn").disabled = true;
+      try {
+        await api(`/api/items/${it.id}/action`, { action: "retry" });
+        toast("已加入队列，先转录再总结");
+        location.hash = "#/process";
+      } catch (e) { toast(e.message); $("#genNoteBtn").disabled = false; }
+    };
+    return;
+  }
   if (itemTab === "script") renderScriptTab(el);
   else if (itemTab === "summary") renderSummaryTab(el);
   else renderMindmapTab(el);
@@ -1330,7 +1348,8 @@ async function renderProcess() {
 
 const TABS = [
   ["active", "处理中", ACTIVE], ["failed", "失败", ["failed"]], ["need_key", "待提炼", ["need_key"]],
-  ["irrelevant", "主题无关", ["irrelevant"]], ["skipped", "已跳过", ["skipped"]], ["done", "已完成", ["done"]],
+  ["irrelevant", "主题无关", ["irrelevant"]], ["skipped", "已跳过", ["skipped"]],
+  ["video_only", "仅收藏", ["video_only"]], ["done", "已完成", ["done"]],
 ];
 
 async function renderProcessLive() {
@@ -1503,11 +1522,23 @@ async function renderSettings() {
       <div class="row"><button class="btn" id="rulesDemo">插入示例格式</button><span class="small muted">用你现有的文件夹名套一份，插进去再改。</span></div>
     </div>
     <div class="card form">
-      <h2>主题筛选 <span class="chip gray">已停用</span></h2>
-      <p class="muted" style="margin:-6px 0 0">这块现在不参与任何判断：AI 不再因为「跟主题无关」把视频收起来，有实质内容的都会进收藏库。</p>
-      <div class="field"><label>我关注的主题（仅存档）</label>
-        <textarea id="focus" rows="2" class="off">${esc(s.focus_topic)}</textarea>
-        <div class="hint">内容照常保存，将来想重新启用就能接着用。</div></div>
+      <h2>主题筛选</h2>
+      <p class="muted" style="margin:-6px 0 0">在下载和转录之前，先用标题、作者、时长判一次。命中「不要纳入」的会省掉转录和 AI 提炼，但视频照常下载、标题照常保留。</p>
+      <div class="topic2">
+        <div class="field"><label>要纳入的主题 <span class="chip teal">命中才转录</span></label>
+          <textarea id="topicIn" rows="7" placeholder="一行一条。留空 = 全都转录，不筛。">${esc(s.topic_include)}</textarea>
+          <div class="hint">留空时这一列完全不生效。一旦填了，只有符合其中一条的才转录，判错就等于漏掉这条内容——想稳一点就留空。</div></div>
+        <div class="field"><label>不要纳入的主题 <span class="chip gray">只留视频</span></label>
+          <textarea id="topicOut" rows="7" placeholder="影音娱乐&#10;游戏竞技（含实况、攻略、电竞比赛，不含讲游戏开发的）">${esc(s.topic_exclude)}</textarea>
+          <div class="hint">命中这些只下载视频、保留标题，不做转录和总结。判错了也不怕：详情页有「生成笔记」，本机补做，不重新下载。</div></div>
+      </div>
+      <div class="field"><label>判定规则</label>
+        <div class="hint">
+          · 两列都空 = 这个功能没开，全部照常转录<br>
+          · 两列冲突（同时符合）时，以「不要纳入」为准<br>
+          · 判不出来、调用失败、没配 AI Key，一律按纳入处理，宁可多做不漏<br>
+          · 只对之后新加的条目生效，已经在库里的不重判；自己导入的本地视频不参与判定（信息不够准）
+        </div></div>
     </div>
     </div>`;
 
@@ -1577,7 +1608,8 @@ async function renderSettings() {
   $("#saveBtn").onclick = async () => {
     await api("/api/settings", {
       provider: $("#provider").value, base_url: $("#baseUrl").value.trim(), model: $("#model").value.trim(), api_key: $("#apiKey").value.trim(),
-      focus_topic: $("#focus").value.trim(), folder_rules: $("#folderRules").value.trim(),
+      topic_include: $("#topicIn").value.trim(), topic_exclude: $("#topicOut").value.trim(),
+      folder_rules: $("#folderRules").value.trim(),
       whisper_model: $("#wm").value, asr_engine: $("#engine").value, use_subtitles: $("#useSubs").checked, max_minutes: +$("#maxMin").value, use_hf_mirror: $("#mirror").checked,
       keep_video: $("#keepVideo").checked, library_dir: $("#libDir").value.trim(), browser: $("#browser").value, welcome_done: true,
     });

@@ -84,8 +84,9 @@ DEFAULTS = {
     "base_url": PROVIDERS["deepseek"]["base_url"],
     "model": PROVIDERS["deepseek"]["model"],
     "api_key": "",
-    "focus_topic": "AI / 人工智能相关的干货：AI 工具、提示词、AI 编程、AI 绘画和视频、大模型、用 AI 提升效率或赚钱的方法",
-    "only_relevant": True,              # 只保留和关注主题相关的视频（主题筛选已停用，此项不再生效，仅原样留存）
+    # ---- 主题筛选（先判后处理）：两列各一行一条，空着 = 该列不生效
+    "topic_include": "",                # 只转录这些主题；留空 = 全都转录
+    "topic_exclude": "",                # 命中这些主题就只下载视频、不做转录和总结
     "folder_rules": "",                 # 用户自己写的分类想法：什么样的内容归到哪个文件夹
     "categories": DEFAULT_CATEGORIES,
     "asr_engine": "auto",               # auto / mlx / faster —— auto：苹果芯片 Mac 用 mlx，其他用 faster-whisper
@@ -111,10 +112,6 @@ DEFAULTS = {
     "tokens_used": 0,
     "timing": {},                       # 各步骤实际耗时（用来估算剩余时间）
 }
-
-# 主题筛选已停用：现在只要是有实质内容的视频都进收藏库，不再按主题自动收起。
-# 要恢复这项功能：把这里改成 True，并把 llm.py 里 "relevant" 那条规则改回按主题判断。
-TOPIC_FILTER_ENABLED = False
 
 _lock = threading.Lock()
 

@@ -10,6 +10,17 @@ IMAGE_DIR = "_图片"   # 图文的图片放在笔记目录下的这个文件夹
 BAD = re.compile(r'[\\/:*?"<>|\r\n\t#^\[\]]+')
 
 
+TAG_RE = re.compile(r"#[^#\s]{1,20}\s*")   # 抖音标题里的一串话题标签
+
+
+def clean_title(text, fallback="", n=50) -> str:
+    """把抖音的原始描述整理成能当笔记名的短标题：去掉话题标签、多余空白和收尾标点。"""
+    t = TAG_RE.sub(" ", text or "")
+    t = re.sub(r"\s+", " ", t).strip()
+    t = t.strip(" -—·|，,。.、~～")
+    return (t[:n].rstrip(" -—·|，,。.、~～")) or (fallback or "未命名")
+
+
 def safe_name(s: str, n=40) -> str:
     s = BAD.sub("-", s or "").strip(" .-")
     s = re.sub(r"-{2,}", "-", s)

@@ -691,7 +691,7 @@ class Handler(BaseHTTPRequestHandler):
                     path_ = notes.write(it)
                     db.update(item_id, status="done", note=it["note"], md_path=path_, reason=None)
                     return self._json(db.get(item_id))
-                db.update(item_id, status="queued", attempts=0, reason=None)
+                db.update(item_id, status="queued", attempts=0, reason=None, no_gate=1)
                 worker.submit("process")
             elif act == "learned":
                 v = bool(b.get("value", True))

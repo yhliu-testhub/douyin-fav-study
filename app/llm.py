@@ -16,7 +16,6 @@ SYSTEM = """你是一位擅长把短视频内容整理成学习笔记的助手�
 {{
   "skip": false,
   "skip_reason": "",
-  "relevant": true,
   "title": "一句话说清这条视频讲了什么（20字以内，不要照抄原标题里的话题标签）",
   "folder": "从这些文件夹里选一个最归得进去的：{folders}；都不合适就填空字符串",
   "tags": ["3-5个关键词"],
@@ -35,7 +34,6 @@ SYSTEM = """你是一位擅长把短视频内容整理成学习笔记的助手�
 
 规则：
 - 如果视频是广告带货、短剧剧情、唱歌跳舞、纯娱乐闲聊，或几乎没有实质信息，返回 {{"skip": true, "skip_reason": "简短原因"}}。
-- "relevant" 一律填 true（主题筛选功能已停用，不再按主题判断相关性）。
 - 不要编造视频里没有的信息；转写里明显听错的专有名词（比如工具名）可以按常识纠正。
 - folder：只能从上面给的文件夹清单里原样挑一个（一字不差，包括标点）；确实没有一个合适就填空字符串 ""，不要自己造新名字。@@RULES@@
 
@@ -323,6 +321,71 @@ def classify(settings, folders, title, summary):
     except Exception:
         return "", used
     return (name if name in names else ""), used
+
+
+JUDGE_SYSTEM = """你是内容筛选助手。用户会给你两列清单，和一条抖音内容的基本信息，你要判断这条内容要不要转成文字笔记。
+
+规则（按顺序执行）：
+1. 只要符合「不要纳入」里的任何一条，就判为不纳入，即使它同时符合「要纳入」。
+2. 「要纳入」不为空时：符合其中一条才算纳入；一条都不符合，同样判为不纳入。
+3. 「要纳入」为空时：除了规则 1，一律纳入。
+4. 信息不足、拿不准、判断不了，一律判为纳入（宁可多做，不要漏内容）。
+5. 只看内容本身讲什么。标题党、只有口号或一堆话题标签、看不出内容却说得很夸张的，按纳入处理，不要凭一个标签下结论。
+
+只输出一个 JSON 对象，不要解释过程：{"keep": true, "why": "游戏实况"}
+- keep 只能是 true 或 false。
+- why 是给用户看的一句话归类，12 字以内，像「游戏实况」「影视解说」「AI 工具实操」；判为纳入时可以写内容主题，也可以留空字符串。"""
+
+
+def _topic_lines(text):
+    """把用户填的多行主题拆成清单，去掉前面的短横线、序号。"""
+    out = []
+    for ln in str(text or "").splitlines():
+        ln = ln.strip()
+        ln = re.sub(r"^[-*·•]+\s*", "", ln)
+        ln = re.sub(r"^\d+[.、)）]\s*", "", ln)
+        if ln:
+            out.append(ln[:60])
+    return out[:40]
+
+
+def judge_topic(settings, title, author="", duration=0, kind="video", desc=""):
+    """先判：这条内容要不要转成笔记。返回 (keep, why, 消耗的 token)。
+
+    两列都空时不做判断、不花钱，直接按纳入处理。
+    注意这里不用 .format()：用户填的主题里可能有花括号，拼字符串最稳。
+    """
+    inc = _topic_lines(settings.get("topic_include"))
+    exc = _topic_lines(settings.get("topic_exclude"))
+    if not inc and not exc:
+        return True, "", 0
+    blocks = [
+        "【要纳入的主题】\n" + ("\n".join("- " + x for x in inc) if inc else "（没填，表示不限制）"),
+        "【不要纳入的主题】\n" + ("\n".join("- " + x for x in exc) if exc else "（没填）"),
+    ]
+    info = ["【内容】",
+            "类型：" + ("图文" if kind == "note" else "视频"),
+            "标题：" + ((title or "（无标题）")[:200]),
+            "作者：" + (author or "（未知）")]
+    if duration:
+        info.append(f"时长：{int(round(duration))} 秒")
+    tail = (desc or "").strip()
+    if tail and tail != (title or "").strip():
+        info.append("简介：" + tail[:300])
+    messages = [
+        {"role": "system", "content": JUDGE_SYSTEM},
+        {"role": "user", "content": "\n\n".join(blocks + ["\n".join(info)])},
+    ]
+    out, used = chat(settings, messages, temperature=0, max_tokens=120)
+    try:
+        j = parse_json(out)
+    except Exception:
+        return True, "", used   # 解析不出来就当纳入，别丢内容
+    keep = j.get("keep")
+    why = str(j.get("why") or "").strip()[:20]
+    if not isinstance(keep, bool):
+        return True, why, used
+    return keep, why, used
 
 
 MINDMAP_SYSTEM = """你是知识整理助手。把用户给的视频文字稿整理成一张思维导图，用 Markmap 的 Markdown 格式输出。

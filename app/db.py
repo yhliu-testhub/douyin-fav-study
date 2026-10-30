@@ -76,6 +76,7 @@ EXTRA_COLUMNS = {
     "images_json": "TEXT",     # 图文的图片（相对于笔记目录的路径列表）
     "mindmap": "TEXT",         # Markmap 文本，独立生成，不再依赖精读
     "folder_id": "INTEGER",    # 所属文件夹；NULL 就是「待分类」
+    "no_gate": "INTEGER",      # 用户手动要求补转录时置 1：这一次不要再走主题判定
 }
 
 
