@@ -69,7 +69,8 @@ def render(item: dict, md_dir: Path = None) -> str:
         if body:
             lines.extend([f"## {name}", "", *body, ""])
 
-    section("一句话总结", [n.get("summary", "")] if n.get("summary") else [])
+    one = (n.get("one_line") or n.get("summary") or "").strip()
+    section("一句话总结", [one] if one else [])
     if item.get("images"):
         lib = library_dir()
         body = []
@@ -78,42 +79,26 @@ def render(item: dict, md_dir: Path = None) -> str:
             link = os.path.relpath(target, md_dir).replace(os.sep, "/") if md_dir else rel
             body.append(f"![图{i}](<{link}>)")
         section("原图", body)
-    section("核心观点", [f"- {p}" for p in n.get("points", [])])
-    section("照着做", [f"{i}. {s}" for i, s in enumerate(n.get("steps", []), 1)])
-    section("提到的工具", [f"- **{t['name']}**：{t.get('use', '')}" for t in n.get("tools", [])])
-    section("关键概念", [f"- **{c['term']}**：{c.get('explain', '')}" for c in n.get("concepts", [])])
-    if n.get("quiz"):
-        body = []
-        for i, q in enumerate(n["quiz"], 1):
-            body += [f"**{i}. {q['q']}**", "", f"> 答案：{q.get('a', '')}", ""]
-        section("自测题", body)
-    d = item.get("deep")
-    if d:
-        lines += ["---", "", f"# 🎓 精读（{d.get('model', '')}）", ""]
-        section("核心结论", [f"{i}. {c}" for i, c in enumerate(d.get("conclusions", []), 1)])
-        if d.get("mindmap"):
-            section("思维导图（Markmap）", ["```markmap", d["mindmap"], "```"])
-        if d.get("outline"):
+    sum_md = (n.get("summary_md") or "").strip()
+    log_md = (n.get("logic_md") or "").strip()
+    if sum_md:
+        section("核心内容拆解", [sum_md])
+    if log_md:
+        section("主线逻辑", [log_md])
+    if not sum_md and not log_md:
+        # 还没按新结构重新提炼过的老笔记：保留旧版区块，别让内容凭空消失
+        section("核心观点", [f"- {p}" for p in n.get("points", [])])
+        section("照着做", [f"{i}. {s}" for i, s in enumerate(n.get("steps", []), 1)])
+        section("提到的工具", [f"- **{t['name']}**：{t.get('use', '')}" for t in n.get("tools", [])])
+        section("关键概念", [f"- **{c['term']}**：{c.get('explain', '')}" for c in n.get("concepts", [])])
+        if n.get("quiz"):
             body = []
-            for o in d["outline"]:
-                body.append(f"### {('[' + o['time'] + '] ') if o.get('time') else ''}{o['title']}")
-                body += [f"- {p}" for p in o.get("points", [])] + [""]
-            section("章节大纲", body)
-        section("概念与术语", [f"- **{c['term']}**：{c.get('explain', '')}" for c in d.get("concepts", [])])
-        if d.get("check_questions"):
-            body = []
-            for i, q in enumerate(d["check_questions"], 1):
-                body += [f"{i}. {q['q']}", f"   - 提示：{q.get('hint', '')}", f"   - 参考要点：{q.get('key', '')}"]
-            section("理解检查", body)
-        if d.get("quiz"):
-            body = []
-            for i, q in enumerate(d["quiz"], 1):
-                body.append(f"**{i}. {q['q']}**")
-                body += [f"   {'ABCDEFGH'[j]}. {o}" for j, o in enumerate(q["options"])]
-                body += [f"> 答案：{'ABCDEFGH'[q['answer']]}　{q.get('explain', '')}", ""]
-            section("测验", body)
-        if d.get("anki"):
-            section("Anki 卡片（问题<Tab>答案）", ["```", *[f"{c['q']}\t{c['a']}" for c in d["anki"]], "```"])
+            for i, q in enumerate(n["quiz"], 1):
+                body += [f"**{i}. {q['q']}**", "", f"> 答案：{q.get('a', '')}", ""]
+            section("自测题", body)
+    mm = (item.get("mindmap") or n.get("mindmap") or "").strip()
+    if mm:
+        section("思维导图", ["```markmap", mm, "```"])
     if (item.get("my_note") or "").strip():
         section("我的笔记", [item["my_note"].strip()])
     if item.get("transcript"):

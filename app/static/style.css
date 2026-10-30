@@ -566,6 +566,12 @@ iframe.mindmap { width: 100%; height: 420px; border: 0; border-radius: var(--r-c
 .btn .ic { margin: 0 -1px; }
 .btn.sm .ic { width: 14px; height: 14px; }
 .star-ic { color: #ff9f0a; margin-right: 4px; }
+.watch-ic { color: var(--accent); margin-right: 4px; }
+/* 「星标 / 在看」视图里，标题前的小图标可以直接点掉 */
+.mark-ic { border-radius: 5px; transition: background .15s var(--ease); }
+.mark-ic.can-off { cursor: pointer; padding: 1px 3px; margin: -1px -3px; }
+.mark-ic.can-off:hover { background: var(--accent-soft); }
+.mark-ic.can-off:hover .ic { opacity: .5; }
 .learned-tag { display: inline-flex; align-items: center; gap: 4px; }
 .chip { display: inline-flex; align-items: center; gap: 4px; }
 .hint-box, .key-box { display: flex; gap: 8px; align-items: flex-start; }

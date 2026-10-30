@@ -11,3 +11,6 @@ Thumbs.db
 # 本地备份与工程元数据
 .backup/
 .workbuddy/
+# 本机随手记（个人备忘，不进仓库）
+备忘.txt
+新建.txt

@@ -165,8 +165,12 @@ class Worker:
             return None
         return f"按主题筛选跳过：{why or '命中「不要纳入」'}"
 
-    def _mark_topic_skipped(self, it, media, reason):
-        """只留标题和视频，不转录、不总结。标题从原始描述里洗一下，去掉话题标签。"""
+    def _mark_video_only(self, it, media, reason):
+        """只留标题和视频，不转录、不总结。
+
+        两种场景：命中「不要纳入」的主题；或者视频里根本没有可转写的人声。
+        标题从原始描述里洗一下，去掉话题标签。
+        """
         is_note = it.get("media_type") == "note"
         title = notes.clean_title(it.get("title") or "",
                                   f"抖音{'图文' if is_note else '视频'} {it.get('aweme_id') or it['id']}")
@@ -195,7 +199,7 @@ class Worker:
                 if media is None:
                     return
                 if it.get("topic_skip"):   # 命中「不要纳入」：只留标题和视频，不转录不总结
-                    self._mark_topic_skipped(it, media, it["topic_skip"])
+                    self._mark_video_only(it, media, it["topic_skip"])
                     return
                 if isinstance(media, dict) and "note" in media:  # 图文：下载图片 + 识别图片文字
                     if not self._process_note(it, media["note"]):
@@ -215,9 +219,14 @@ class Worker:
                         max_minutes=s.get("max_minutes", 15), log=self.log, should_stop=self.stopping,
                         on_progress=self.prog.set_frac)
                 except transcribe.NoSpeech as e:
-                    db.update(it["id"], status="skipped", reason=str(e))
-                    self.log(f"[{it['id']}] 跳过：{e}")
-                    self._cleanup(it, media, s)
+                    if getattr(e, "keep_video", False):
+                        # 文件是好的、只是没人说话：跟「不要纳入」一个待遇，
+                        # 留一条「仅收藏」笔记，视频改名保留，需要时再补生成
+                        self._mark_video_only(it, media, str(e))
+                    else:
+                        db.update(it["id"], status="skipped", reason=str(e))
+                        self.log(f"[{it['id']}] 跳过：{e}")
+                        self._cleanup(it, media, s)
                     return
                 self._cleanup(it, media, s)
                 if self.stopping():

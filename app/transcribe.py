@@ -20,7 +20,15 @@ SR = 16000
 
 
 class NoSpeech(Exception):
-    """视频里没有可用的人声（纯音乐、静音画面等）。"""
+    """视频里没有可用的人声（纯音乐、静音画面等）。
+
+    keep_video=True 表示「文件是好的，只是没人说话」——这种要保留视频、留一条
+    「仅收藏」笔记；读不了文件 / 解码失败则是 keep_video=False，按失败处理。
+    """
+
+    def __init__(self, msg, keep_video=False):
+        super().__init__(msg)
+        self.keep_video = keep_video
 
 
 def is_apple_silicon():
@@ -76,7 +84,7 @@ def load_audio(path, limit_sec=None):
     with container:
         stream = next((s for s in container.streams if s.type == "audio"), None)
         if stream is None:
-            raise NoSpeech("视频没有声音")
+            raise NoSpeech("视频没有声音", keep_video=True)
         resampler = av.AudioResampler(format="s16", layout="mono", rate=SR)
 
         def take(frames):
@@ -102,7 +110,7 @@ def load_audio(path, limit_sec=None):
                 raise NoSpeech(f"音频解码失败：{e}")
             # 文件尾部损坏时，已解码的部分照样能用
     if not chunks:
-        raise NoSpeech("视频没有声音")
+        raise NoSpeech("视频没有声音", keep_video=True)
     audio = np.concatenate(chunks).astype(np.float32) / 32768.0
     if max_samples:
         audio = audio[:max_samples]
@@ -214,7 +222,7 @@ def transcribe(path, *, engine="auto", mlx_model="mlx-community/whisper-large-v3
     audio = load_audio(path, max_minutes * 60 if max_minutes else None)
     duration = len(audio) / SR
     if duration < 1:
-        raise NoSpeech("视频没有声音")
+        raise NoSpeech("视频没有声音", keep_video=True)
     eng = pick_engine(engine)
     if eng == "mlx":
         try:
@@ -229,9 +237,10 @@ def transcribe(path, *, engine="auto", mlx_model="mlx-community/whisper-large-v3
             for s in segs if s["text"].strip()]
     segs = _drop_repeats(segs)
     text = "".join(_join(segs))
-    # 少于 15 个字基本就是纯音乐/只有一两句歌词，不值得提炼
-    if len(text.replace(" ", "")) < 15:
-        raise NoSpeech("视频里几乎没有说话内容（可能是纯音乐或无对白）")
+    # 少于 8 个字基本就是纯音乐/只有一两句歌词，提炼不出东西。
+    # 阈值别设太高：屏幕录制类视频常常只有几句口播 + 字幕，容易误判
+    if len(text.replace(" ", "")) < 8:
+        raise NoSpeech("视频里几乎没有说话内容（可能是纯音乐或无对白）", keep_video=True)
     return {"text": text, "segments": segs, "duration": duration, "engine": eng}
 
 

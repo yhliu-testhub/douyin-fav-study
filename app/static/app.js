@@ -60,7 +60,7 @@ const savedLib = (() => {
   try { return JSON.parse(localStorage.getItem("libView") || "{}") || {}; } catch { return {}; }
 })();
 let libFilter = {
-  q: "", learned: "", starred: "", folder: "",
+  q: "", learned: "", starred: "", watching: "", folder: "",
   view: savedLib.view === "list" ? "list" : "card",
   sort: savedLib.sort || "date",
   desc: savedLib.desc !== undefined ? !!savedLib.desc : true,
@@ -351,6 +351,7 @@ async function renderLibrary(soft = false) {
   const params = new URLSearchParams({ status: "done,video_only" });
   if (libFilter.q) params.set("q", libFilter.q);
   if (libFilter.starred) params.set("starred", "1");
+  if (libFilter.watching) params.set("watching", "1");
   if (libFilter.folder) params.set("folder", libFilter.folder);
   if (!soft && !$("#libGrid")) view.innerHTML = skeletonLibrary();
   const items = sortItems(await api("/api/items?" + params));
@@ -380,8 +381,9 @@ async function renderLibrary(soft = false) {
     <div class="toolbar">
       <input class="search" id="q" placeholder="搜索标题、观点、逐字稿、作者…" value="${esc(libFilter.q)}">
       <div class="seg" id="segFilter">
-        <button data-v="all" class="${libFilter.starred ? "" : "on"}">全部</button>
+        <button data-v="all" class="${libFilter.starred || libFilter.watching ? "" : "on"}">全部</button>
         <button data-v="star" class="${libFilter.starred ? "on" : ""}">${ico("star", "ic sm")}星标</button>
+        <button data-v="watch" class="${libFilter.watching ? "on" : ""}">${ico("eye", "ic sm")}在看</button>
       </div>
       <div class="seg" id="segView">
         <button data-v="card" class="${libFilter.view === "card" ? "on" : ""}">卡片</button>
@@ -401,6 +403,7 @@ function bindLibrary() {
   if (q) q.oninput = (e) => { clearTimeout(t); t = setTimeout(() => { libFilter.q = e.target.value.trim(); renderLibrary(true); }, 250); };
   $$("#segFilter button").forEach((b) => b.onclick = () => {
     libFilter.starred = b.dataset.v === "star" ? "1" : "";
+    libFilter.watching = b.dataset.v === "watch" ? "1" : "";
     $$("#segFilter button").forEach((x) => x.classList.toggle("on", x === b));
     renderLibrary(true);
   });
@@ -418,6 +421,19 @@ function bindLibrary() {
     renderLibrary(true);
   });
   const add = $("#addBtn"); if (add) add.onclick = openAdd;
+  // 在「星标 / 在看」视图里，标题前的小图标可以直接点掉，不用进详情页
+  $$("#libGrid [data-unmark]").forEach((el) => {
+    const off = async (e) => {
+      e.preventDefault(); e.stopPropagation();   // 卡片本身是链接，别跟着跳走
+      const kind = el.dataset.unmark;
+      try { await api(`/api/items/${el.dataset.id}/action`, { action: kind, value: false }); }
+      catch (err) { return toast(err.message); }
+      toast(kind === "star" ? "已取消星标" : "已取消在看");
+      renderLibrary(true);
+    };
+    el.addEventListener("click", off);
+    el.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") off(e); });
+  });
   const cls = $("#classifyBtn");
   if (cls) cls.onclick = async () => {
     let r;
@@ -733,7 +749,7 @@ function detailHtml(items) {
     <th class="c-video">视频</th>
     <th>链接</th></tr></thead><tbody>
     ${items.map((it) => `<tr data-id="${it.id}">
-      <td class="c-title"><a href="#/item/${it.id}">${it.starred ? ico("starFill", "ic sm star-ic") : ""}${esc(it.note_title || it.title || "未命名")}</a>${it.status === "video_only" ? `<span class="chip gray" style="margin-left:6px">仅收藏</span>` : ""}</td>
+      <td class="c-title"><a href="#/item/${it.id}">${markIcons(it)}${esc(it.note_title || it.title || "未命名")}</a>${it.status === "video_only" ? `<span class="chip gray" style="margin-left:6px">仅收藏</span>` : ""}</td></td>
       <td>${esc(it.author || "")}</td>
       <td>${catChip(it.folder_name || "待分类")}</td>
       <td class="c-date">${fmtDate(it.created_at)}</td>
@@ -744,13 +760,27 @@ function detailHtml(items) {
   </tbody></table>`;
 }
 
+/* 标题前的标记图标。停在「星标」或「在看」视图里时，图标可以直接点掉，不用进详情页 */
+function markIcons(it) {
+  const one = (kind, on, icon, cls, label) => {
+    if (!on) return "";
+    const can = kind === "star" ? !!libFilter.starred : !!libFilter.watching;
+    const attr = can
+      ? ` role="button" tabindex="0" data-unmark="${kind}" data-id="${it.id}" title="点一下取消${label}"`
+      : ` title="${label}"`;
+    return `<span class="mark-ic${can ? " can-off" : ""}"${attr}>${ico(icon, "ic " + cls)}</span>`;
+  };
+  return one("star", it.starred, "starFill", "star-ic", "星标")
+    + one("watch", it.watching, "eye", "watch-ic", "在看");
+}
+
 function gridHtml(items) {
   if (!items.length) {
     if (libFilter.folder) return emptyHtml("inbox",
       libFilter.folder === "none" ? "待分类里没有笔记" : "这个文件夹还是空的",
       "把笔记卡片拖到左侧的文件夹上就能归类，或者点上面的「AI 自动归类」。");
     const any = STATE.stats.total;
-    if (libFilter.q || libFilter.learned || libFilter.starred)
+    if (libFilter.q || libFilter.learned || libFilter.starred || libFilter.watching)
       return emptyHtml("search", "没有符合条件的笔记", "换个关键词，或者切回「全部」看看。");
     if (any) return emptyHtml("inbox", "笔记还在路上", "视频处理完会自动出现在这里。", `<a class="btn" href="#/process">查看处理进度</a>`);
     return emptyHtml("book", "收藏库还是空的", "把抖音收藏里的干货搬进来，这里会变成你的知识库。",
@@ -766,8 +796,8 @@ function gridHtml(items) {
           : `<span class="cardplay off" role="button" tabindex="0" data-play-off="${esc(noVideoWhy(it))}" title="${esc(noVideoWhy(it))}">${ico("play", "ic sm")}</span>`}
         ${it.duration ? `<span class="dur">${fmtDur(it.duration)}</span>` : ""}</div>
       <div class="body">
-        <div class="t">${it.starred ? ico("starFill", "ic star-ic") : ""}${esc(it.note_title || it.title)}</div>
-        <div class="s">${esc(it.summary || (it.status === "video_only" ? "按主题只保留了视频，没有转录和总结" : ""))}</div>
+        <div class="t">${markIcons(it)}${esc(it.note_title || it.title)}</div>
+        <div class="s">${esc(it.summary || (it.status === "video_only" ? (it.reason || "只保留了视频，没有转录和总结") : ""))}</div>
         <div class="foot">${catChip(it.folder_name || "待分类")}
           ${it.status === "video_only" ? `<span class="chip gray">仅收藏</span>` : ""}
           ${it.difficulty ? `<span class="chip gray">${esc(it.difficulty)}</span>` : ""}
@@ -777,19 +807,6 @@ function gridHtml(items) {
 }
 
 /* ---------------------------------------------------------------- 笔记详情 */
-function noteBody(it) {
-  const n = it.note || {};
-  const sec = (title, html) => (html ? `<section><h2>${title}</h2>${html}</section>` : "");
-  return `
-    ${sec("一句话总结", n.summary ? `<div class="summary">${esc(n.summary)}</div>` : "")}
-    ${sec("核心观点", n.points?.length ? `<ol class="points">${n.points.map((p) => `<li>${esc(p)}</li>`).join("")}</ol>` : "")}
-    ${sec("照着做", n.steps?.length ? `<ol class="steps">${n.steps.map((p) => `<li><div>${esc(p)}</div></li>`).join("")}</ol>` : "")}
-    ${sec("提到的工具", n.tools?.length ? `<div class="kv">${n.tools.map((t) => `<div><b>${esc(t.name)}</b><span>${esc(t.use)}</span></div>`).join("")}</div>` : "")}
-    ${sec("关键概念", n.concepts?.length ? `<div class="kv">${n.concepts.map((t) => `<div><b>${esc(t.term)}</b><span>${esc(t.explain)}</span></div>`).join("")}</div>` : "")}
-    ${sec("自测一下", n.quiz?.length ? `<div class="quiz">${n.quiz.map((q, i) => `<div class="q"><b>${i + 1}. ${esc(q.q)}</b>
-        <div class="row" style="margin-top:6px"><button class="btn sm" data-reveal>看答案</button></div><div class="a">${ico("check", "ic sm")} ${esc(q.a)}</div></div>`).join("")}</div>` : "")}`;
-}
-
 let itemTab = "note";
 let curItem = null;
 let quizState = {};
@@ -843,6 +860,7 @@ async function renderItem(id, tab) {
             : `<button class="btn sm off" data-play-off="${esc(noVideoWhy(it))}" title="${esc(noVideoWhy(it))}">${ico("play")}播放视频</button>`}
           ${it.url ? `<a class="btn sm" href="${esc(it.url)}" target="_blank" rel="noopener">${ico("external")}打开链接</a>` : ""}
           <button class="btn sm" id="starBtn">${it.starred ? ico("starFill", "ic star-ic") + "已星标" : ico("star") + "星标"}</button>
+          <button class="btn sm" id="watchBtn" title="${it.watching ? "点一下从「在看」里移除" : "打个标记，方便之后回到这条"}">${it.watching ? ico("eye", "ic watch-ic") + "在看中" : ico("eye") + "在看"}</button>
         </div>
       </div>
       ${srcLink ? `<div class="src-row">${srcLink}</div>` : ""}
@@ -879,6 +897,7 @@ async function renderItem(id, tab) {
 
   const act = (action, extra = {}) => api(`/api/items/${id}/action`, { action, ...extra });
   $("#starBtn").onclick = async () => { await act("star", { value: !it.starred }); renderItem(id, itemTab); };
+  $("#watchBtn").onclick = async () => { await act("watch", { value: !it.watching }); renderItem(id, itemTab); };
   $("#pdfBtn").onclick = () => window.open(`/print?ids=${id}`, "_blank");
   $("#revealBtn") && ($("#revealBtn").onclick = () => api("/api/open", { what: "item", id }).catch((e) => toast(e.message)));
   $("#includeBtn") && ($("#includeBtn").onclick = async () => { await act("include"); toast("已收进收藏库"); refreshState(); renderItem(id, itemTab); });
@@ -922,11 +941,14 @@ function renderTab() {
   const it = curItem, el = $("#tabBody");
   if (!el) return;
   el.classList.remove("fade-in"); void el.offsetWidth; el.classList.add("fade-in");
-  if (it.status === "video_only") {   // 按主题只留了视频，还没有文字稿
+  if (it.status === "video_only") {   // 只留了视频，还没有文字稿（命中「不要纳入」或本来没人声）
+    const noVoice = /没有说话|没有声音|没说话|无对白/.test(it.reason || "");
     el.innerHTML = `<div class="only-box">
-      <div><b>这条按主题规则只保留了视频，没有做逐字稿和总结。</b></div>
+      <div><b>这条只保留了视频，没有做逐字稿和总结。</b></div>
       <div class="muted small">${esc(it.reason || "")}</div>
-      <div class="muted small">需要的话可以补做：视频已经在本机，转录在本机跑，不重新下载、也不会再抓一遍。</div>
+      <div class="muted small">${noVoice
+        ? "这条检测不到可用的人声，补做大概率还是拿不到文字稿；标题、视频和笔记会一直留在这里。"
+        : "需要的话可以补做：视频已经在本机，转录在本机跑，不重新下载、也不会再抓一遍。"}</div>
       <button class="btn primary" id="genNoteBtn">${ico("sparkles")}生成笔记（转录 + 总结）</button>
     </div>`;
     $("#genNoteBtn").onclick = async () => {

@@ -51,7 +51,7 @@ def _classify_worker(names):
         for it in targets:
             note = it.get("note") or {}
             title = note.get("title") or it.get("title") or ""
-            summary = note.get("summary") or note.get("one_line") or ""
+            summary = note.get("one_line") or note.get("summary") or (note.get("summary_md") or "")[:300]
             try:
                 name, used = llm.classify(s, names, title, summary)
                 config.add_tokens(used)
@@ -361,7 +361,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(with_video(db.list_items(
                 status=q("status"), category=q("category"), q=(q("q") or "").strip() or None,
                 folder=q("folder"),
-                learned=None if learned in (None, "") else learned == "1", starred=q("starred") == "1")))
+                learned=None if learned in (None, "") else learned == "1", starred=q("starred") == "1",
+                watching=q("watching") == "1")))
         if path.startswith("/api/items/"):
             parts = path.split("/")
             try:
@@ -698,6 +699,8 @@ class Handler(BaseHTTPRequestHandler):
                 db.update(item_id, learned=int(v), learned_at=time.time() if v else None)
             elif act == "star":
                 db.update(item_id, starred=int(bool(b.get("value", True))))
+            elif act == "watch":
+                db.update(item_id, watching=int(bool(b.get("value", True))))
             elif act == "note":
                 db.update(item_id, my_note=str(b.get("text", ""))[:20000])
                 it = db.get(item_id)

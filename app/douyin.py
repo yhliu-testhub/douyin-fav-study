@@ -181,34 +181,67 @@ def parse_aweme(a: dict) -> dict:
 # 所以下载地址 / 封面 / 时长 / 是否广告 / 字幕地址都照常拿到（这些都来自 aweme_detail 的 JSON）。
 SILENT_JS = """
 (() => {
-  var hooked = new WeakSet();
+  if (window.__quietMedia) return;      // 别重复装（同一个文档可能被注入两次）
+  window.__quietMedia = 1;
+
   function quiet(v) {
+    if (!v || v.tagName !== 'VIDEO') return;
     try {
-      v.muted = true; v.volume = 0; v.defaultMuted = true;
+      if (!v.muted) v.muted = true;
+      if (v.volume !== 0) v.volume = 0;
+      if (v.autoplay) { v.autoplay = false; v.removeAttribute('autoplay'); }
       if (!v.paused) v.pause();
     } catch (e) {}
   }
-  function hook(v) {
-    if (!v || hooked.has(v)) return;
-    hooked.add(v);
-    quiet(v);
-    // 页面若又把它播起来，就再按回去；限次以免和页面互相打架
-    var n = 0;
-    v.addEventListener('play', function () { if (n++ < 30) quiet(v); });
-    v.addEventListener('volumechange', function () {
-      try { if (!v.muted || v.volume > 0) { v.muted = true; v.volume = 0; } } catch (e) {}
-    });
-  }
-  function scan() {
-    try { Array.prototype.forEach.call(document.querySelectorAll('video'), hook); } catch (e) {}
-  }
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', scan, { once: true });
-  } else { scan(); }
+
+  // 1) 直接把 play() 拦住：照样返回一个成功的 Promise（免得页面反复重试），
+  //    但立刻静音并暂停。这样连 shadow DOM 里的播放器、页面内部的自动播放都躲不掉。
   try {
-    new MutationObserver(scan).observe(document.documentElement, { childList: true, subtree: true });
+    var orig = HTMLMediaElement.prototype.play;
+    if (!orig || !orig.__quietPatched) {
+      var patched = function () {
+        var self = this, p = null;
+        try { self.muted = true; self.volume = 0; } catch (e) {}
+        try { p = orig.call(self); } catch (e) {}
+        try { self.pause(); } catch (e) {}
+        return (p && p.catch) ? p.catch(function () {}) : Promise.resolve();
+      };
+      patched.__quietPatched = true;
+      HTMLMediaElement.prototype.play = patched;
+    }
   } catch (e) {}
-  setInterval(scan, 1500);
+
+  // 2) 捕获阶段监听 play：元素还没被巡检到也能第一时间按住
+  try { document.addEventListener('play', function (e) { quiet(e.target); }, true); } catch (e) {}
+
+  // 3) 兜底巡检：<video> 被页面重新播起来、或者藏在 shadow DOM 里，都能兜住
+  function shadowVideos(root, out) {
+    var nodes;
+    try { nodes = root.querySelectorAll('*'); } catch (e) { return out; }
+    for (var i = 0; i < nodes.length; i++) {
+      var n = nodes[i];
+      if (!n.shadowRoot) continue;
+      try {
+        Array.prototype.forEach.call(n.shadowRoot.querySelectorAll('video'), function (v) { out.push(v); });
+      } catch (e) {}
+      shadowVideos(n.shadowRoot, out);
+    }
+    return out;
+  }
+  function sweep(full) {
+    var vs = [];
+    try { vs = Array.prototype.slice.call(document.querySelectorAll('video')); } catch (e) {}
+    if (full) { try { shadowVideos(document, vs); } catch (e) {} }
+    for (var i = 0; i < vs.length; i++) quiet(vs[i]);
+  }
+
+  var tick = 0;
+  sweep(true);
+  try { setInterval(function () { tick++; sweep(tick % 4 === 0); }, 400); } catch (e) {}
+  try {
+    new MutationObserver(function () { sweep(false); })
+      .observe(document.documentElement, { childList: true, subtree: true });
+  } catch (e) {}
 })();
 """
 

@@ -77,6 +77,7 @@ EXTRA_COLUMNS = {
     "mindmap": "TEXT",         # Markmap 文本，独立生成，不再依赖精读
     "folder_id": "INTEGER",    # 所属文件夹；NULL 就是「待分类」
     "no_gate": "INTEGER",      # 用户手动要求补转录时置 1：这一次不要再走主题判定
+    "watching": "INTEGER",     # 「在看」：自己打的标记，和星标并列，互不影响
 }
 
 
@@ -182,8 +183,9 @@ def next_queued():
         "SELECT * FROM items WHERE status='queued' ORDER BY id LIMIT 1").fetchone())
 
 
-def list_items(status=None, category=None, q=None, learned=None, starred=None, folder=None, limit=1000):
-    sql = ("SELECT id,source,aweme_id,url,local_path,title,author,duration,cover,status,reason,category,learned,starred,"
+def list_items(status=None, category=None, q=None, learned=None, starred=None, watching=None,
+               folder=None, limit=1000):
+    sql = ("SELECT id,source,aweme_id,url,local_path,title,author,duration,cover,status,reason,category,learned,starred,watching,"
            "folder_id,(SELECT name FROM folders WHERE id=items.folder_id) AS folder_name,"
            "created_at,updated_at,note_json,media_type,(deep_json IS NOT NULL) AS has_deep FROM items WHERE 1=1")
     args = []
@@ -204,6 +206,8 @@ def list_items(status=None, category=None, q=None, learned=None, starred=None, f
         args.append(1 if learned else 0)
     if starred:
         sql += " AND starred=1"
+    if watching:
+        sql += " AND watching=1"
     if q:
         like = f"%{q}%"
         sql += " AND (title LIKE ? OR author LIKE ? OR note_json LIKE ? OR transcript LIKE ? OR my_note LIKE ?)"
@@ -214,7 +218,7 @@ def list_items(status=None, category=None, q=None, learned=None, starred=None, f
     for r in conn().execute(sql, args).fetchall():
         d = _row(r)
         note = d.pop("note") or {}
-        d["summary"] = note.get("summary", "")
+        d["summary"] = note.get("summary") or note.get("one_line") or ""
         d["note_title"] = note.get("title", "")
         d["tags"] = note.get("tags", [])
         d["difficulty"] = note.get("difficulty", "")

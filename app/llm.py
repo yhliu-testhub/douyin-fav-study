@@ -20,19 +20,14 @@ SYSTEM = """你是一位擅长把短视频内容整理成学习笔记的助手�
   "folder": "从这些文件夹里选一个最归得进去的：{folders}；都不合适就填空字符串",
   "tags": ["3-5个关键词"],
   "difficulty": "入门 / 进阶 / 高级 选一个",
-  "summary": "3-5 句话的详细总结",
   "one_line": "一句话总结这条内容的结论（25 字以内，直接给结论）",
   "summary_md": "核心内容拆解（Markdown 正文，见下方排版规则）",
   "logic_md": "主线逻辑（Markdown 正文，按讲解顺序梳理，见下方排版规则）",
-  "points": ["核心观点或知识点，每条一句话，3-8 条"],
-  "steps": ["如果视频教了可以照着做的方法，按顺序写出具体步骤；没有就给空数组"],
-  "tools": [{{"name": "视频提到的工具/网站/产品名", "use": "它是干什么用的"}}],
-  "concepts": [{{"term": "关键概念", "explain": "用大白话解释"}}],
-  "quiz": [{{"q": "根据视频内容出的一道自测题", "a": "答案"}}],
   "mindmap": "Markmap 格式的思维导图（用 # 和 - 写的纯文本，见下方规则）；实在整理不出来就填空字符串"
 }}
 
 规则：
+- 只输出上面格式里列出的字段，不要额外增加字段。
 - 如果视频是广告带货、短剧剧情、唱歌跳舞、纯娱乐闲聊，或几乎没有实质信息，返回 {{"skip": true, "skip_reason": "简短原因"}}。
 - 不要编造视频里没有的信息；转写里明显听错的专有名词（比如工具名）可以按常识纠正。
 - folder：只能从上面给的文件夹清单里原样挑一个（一字不差，包括标点）；确实没有一个合适就填空字符串 ""，不要自己造新名字。@@RULES@@
@@ -52,9 +47,9 @@ mindmap 的写法（Markmap 格式的纯文本，不是图）：
 - 用 Markdown 标题和列表搭结构：# 中心主题（一句话概括全片）、## 一级分支（3-6 个）、- 要点（不超过 25 字）、  - 细节（确实需要才展开）。
 - 层级最多 4 层，总节点 12-30 个，宁可少而清，不要多而碎。
 - 只写内容本身，不要代码块围栏、不要解释；段与段之间用 \n 分行。
-- 这是本次输出里最后一块内容，如果篇幅紧张，优先保证前面字段完整，mindmap 可以只给两层主干。
+- 这是本次输出里最后一块内容；导图和上面两块同等重要，不要为了凑字数把它砍成两层。
 
-- 全部使用简体中文。quiz 出 1-3 题。"""
+- 全部使用简体中文。"""
 
 USER = """标题：{title}
 作者：{author}
@@ -257,6 +252,8 @@ def normalize(d: dict) -> dict:
         "one_line": str(d.get("one_line") or "").strip(),
         "summary_md": str(d.get("summary_md") or "").strip(),
         "logic_md": str(d.get("logic_md") or "").strip(),
+        # 下面几项是旧版字段：新提示词已经不生成，这里保留解析只为兼容老笔记/别的接口，
+        # 界面上只在 summary_md 为空时才拿来兜底。
         "points": _str_list(d.get("points")),
         "steps": _str_list(d.get("steps")),
         "tools": _obj_list(d.get("tools"), ["name", "use"]),
@@ -270,10 +267,11 @@ def normalize(d: dict) -> dict:
         note["mindmap"] = note["mindmap"].rsplit("```", 1)[0].strip()
     if "#" not in note["mindmap"]:
         note["mindmap"] = ""
-    if not note["points"]:
-        raise LLMError("AI 返回的核心观点为空")
+    if not (note["summary_md"] or note["logic_md"]):
+        raise LLMError("AI 返回的笔记正文为空")
     if not note["title"]:
-        note["title"] = note["points"][0][:30]
+        head = (note["one_line"] or note["summary_md"] or note["logic_md"]).strip()
+        note["title"] = (re.split(r"[。！？!?\n]", head)[0].strip() or "未命名")[:30]
     return note
 
 
