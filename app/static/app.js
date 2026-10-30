@@ -522,7 +522,7 @@ function openPlayer(url, title = "", itemId = "") {
     <div class="player-bar">
       <span class="player-title" title="${esc(title)}">${esc(title)}</span><span class="spacer"></span>
       <select class="rate" title="播放速度（A 减速 / S 复位 / D 加速）">
-        ${PLAY_RATES.map((r) => `<option value="${r}">${r}×</option>`).join("")}
+        ${PLAY_RATES.map((r) => `<option value="${r}" ${r === 1 ? "selected" : ""}>${r}×</option>`).join("")}
       </select>
       <button class="btn sm ghost" data-mini title="切换小窗 / 大窗">${mini ? "放大" : "小窗"}</button>
       ${itemId ? `<button class="btn sm ghost opt" data-loc-video="${itemId}">${ico("folder", "ic sm")}定位原文件</button>` : ""}
