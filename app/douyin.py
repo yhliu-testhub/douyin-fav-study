@@ -176,6 +176,43 @@ def parse_aweme(a: dict) -> dict:
 
 # ---------------------------------------------------------------- 浏览器
 
+# 视频详情页打开后抖音会自动播放，处理时会一直出声、画面闪动，干扰正常用电脑。
+# 这里把所有 video 静音并尽量按住不播。只影响播放，不影响页面自己发出的接口请求，
+# 所以下载地址 / 封面 / 时长 / 是否广告 / 字幕地址都照常拿到（这些都来自 aweme_detail 的 JSON）。
+SILENT_JS = """
+(() => {
+  var hooked = new WeakSet();
+  function quiet(v) {
+    try {
+      v.muted = true; v.volume = 0; v.defaultMuted = true;
+      if (!v.paused) v.pause();
+    } catch (e) {}
+  }
+  function hook(v) {
+    if (!v || hooked.has(v)) return;
+    hooked.add(v);
+    quiet(v);
+    // 页面若又把它播起来，就再按回去；限次以免和页面互相打架
+    var n = 0;
+    v.addEventListener('play', function () { if (n++ < 30) quiet(v); });
+    v.addEventListener('volumechange', function () {
+      try { if (!v.muted || v.volume > 0) { v.muted = true; v.volume = 0; } } catch (e) {}
+    });
+  }
+  function scan() {
+    try { Array.prototype.forEach.call(document.querySelectorAll('video'), hook); } catch (e) {}
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', scan, { once: true });
+  } else { scan(); }
+  try {
+    new MutationObserver(scan).observe(document.documentElement, { childList: true, subtree: true });
+  } catch (e) {}
+  setInterval(scan, 1500);
+})();
+"""
+
+
 class Browser:
     """一个保存了登录态的真实浏览器窗口。只能在同一个线程里使用。"""
 
@@ -208,7 +245,7 @@ class Browser:
                     headless=False,
                     viewport={"width": 1280, "height": 860},
                     locale="zh-CN",
-                    args=["--disable-blink-features=AutomationControlled"],
+                    args=["--disable-blink-features=AutomationControlled", "--mute-audio"],
                     ignore_default_args=["--enable-automation"],
                 )
                 if ch != "chromium":
@@ -216,6 +253,7 @@ class Browser:
                 self.ctx = self.pw.chromium.launch_persistent_context(**kw)
                 self.ctx.add_init_script(
                     "Object.defineProperty(navigator,'webdriver',{get:()=>undefined})")
+                self.ctx.add_init_script(SILENT_JS)
                 self.page = self.ctx.pages[0] if self.ctx.pages else self.ctx.new_page()
                 self.log(f"已打开浏览器（{ {'msedge': 'Edge', 'chrome': 'Chrome', 'chromium': '内置 Chromium'}[ch] }）")
                 return
