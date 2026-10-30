@@ -483,35 +483,199 @@ function videoCell(it) {
   return `<span class="play-btn off" tabindex="0" data-play-off="${esc(noVideoWhy(it))}" title="${esc(noVideoWhy(it))}">${ico("play", "ic sm")}</span>`;
 }
 
-let playerEl = null;
+/* -------------------------------- 播放器
+   三种形态：大窗（居中遮罩）/ 小窗（页面内可拖动、可缩放）；倍速；记住上次看到哪。 */
+const PLAY_RATES = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
+const POS_PREFIX = "playpos:";          // 播放进度存在浏览器本地，键 = 视频地址
+let playerEl = null, posMark = 0, dragState = null, rectTimer = 0;
+
+const posStore = {
+  get(url) {
+    try {
+      const r = JSON.parse(localStorage.getItem(POS_PREFIX + url) || "null");
+      return r && r.t > 0 ? r : null;
+    } catch (e) { return null; }
+  },
+  set(url, t, d) {
+    try { localStorage.setItem(POS_PREFIX + url, JSON.stringify({ t: Math.floor(t), d: Math.floor(d || 0), at: Date.now() })); } catch (e) {}
+  },
+  clear(url) { try { localStorage.removeItem(POS_PREFIX + url); } catch (e) {} },
+};
+
+/* 只记“真看过一段”的位置：开头几秒不记（也不抹掉旧记录），看到 95% 以上算看完、下次从头 */
+function savePos(v, url) {
+  if (!v || !url) return;
+  const t = v.currentTime || 0, d = v.duration || 0;
+  if (d && t / d >= 0.95) { posStore.clear(url); return; }
+  if (t < 5) return;
+  posStore.set(url, t, d);
+}
+
 function openPlayer(url, title = "", itemId = "") {
   if (!url) return;
   closePlayer();
+  const mini = localStorage.getItem("player_mini") === "1";
   playerEl = document.createElement("div");
-  playerEl.className = "player-mask";
+  playerEl.className = "player-mask" + (mini ? " mini" : "");
+  playerEl.dataset.url = url;
   playerEl.innerHTML = `<div class="player-box">
     <div class="player-bar">
-      <span class="player-title">${esc(title)}</span><span class="spacer"></span>
-      ${itemId ? `<button class="btn sm ghost" data-loc-video="${itemId}">${ico("folder", "ic sm")}定位原文件</button>` : ""}
-      <a class="btn sm ghost" href="${esc(url)}" target="_blank" rel="noopener">新窗口打开</a>
+      <span class="player-title" title="${esc(title)}">${esc(title)}</span><span class="spacer"></span>
+      <select class="rate" title="播放速度（A 减速 / S 复位 / D 加速）">
+        ${PLAY_RATES.map((r) => `<option value="${r}">${r}×</option>`).join("")}
+      </select>
+      <button class="btn sm ghost" data-mini title="切换小窗 / 大窗">${mini ? "放大" : "小窗"}</button>
+      ${itemId ? `<button class="btn sm ghost opt" data-loc-video="${itemId}">${ico("folder", "ic sm")}定位原文件</button>` : ""}
+      <a class="btn sm ghost opt" href="${esc(url)}" target="_blank" rel="noopener">新窗口打开</a>
       <button class="btn sm ghost" data-close>关闭</button>
     </div>
     <video src="${esc(url)}" controls autoplay playsinline preload="metadata"></video>
   </div>`;
   document.body.appendChild(playerEl);
-  document.body.style.overflow = "hidden";
+  document.body.style.overflow = mini ? "" : "hidden";
   requestAnimationFrame(() => playerEl && playerEl.classList.add("on"));
+
+  const v = playerEl.querySelector("video");
+  const box = playerEl.querySelector(".player-box");
+  const rate = playerEl.querySelector(".rate");
+  rate.onchange = () => { v.playbackRate = +rate.value; rate.blur(); };  // 松开焦点，别让 A/S/D 被下拉吃掉
+
+  // 上次看到哪，接着播。metadata 有可能在挂监听之前就好了，所以再主动补一次
+  const resume = () => {
+    if (v.dataset.resumed) return;
+    const p = posStore.get(url);
+    if (!p || !(p.t > 5) || (v.duration && p.t >= v.duration - 3)) return;
+    v.dataset.resumed = "1";
+    try { v.currentTime = p.t; toast(`已从上次的 ${fmtTs(p.t)} 继续`); } catch (e) {}
+  };
+  v.addEventListener("loadedmetadata", resume);
+  v.addEventListener("canplay", resume);
+  if (v.readyState >= 1) resume();
+  // 播放中每 3 秒记一次，别把 localStorage 写爆
+  v.addEventListener("timeupdate", () => {
+    const now = Date.now();
+    if (now - posMark < 3000) return;
+    posMark = now;
+    savePos(v, url);
+  });
+
+  if (mini) applyMiniRect();
+
+  // 小窗：按住标题栏拖动
+  playerEl.querySelector(".player-bar").addEventListener("mousedown", (e) => {
+    if (!playerEl.classList.contains("mini")) return;
+    if (e.target.closest("button,a,select")) return;
+    const r = box.getBoundingClientRect();
+    dragState = { dx: e.clientX - r.left, dy: e.clientY - r.top };
+    e.preventDefault();
+    document.addEventListener("mousemove", onDrag);
+    document.addEventListener("mouseup", endDrag);
+  });
+  // 小窗：右下角拖动改大小后记一下
+  if (window.ResizeObserver) {
+    new ResizeObserver(() => {
+      if (!playerEl || !playerEl.classList.contains("mini")) return;
+      clearTimeout(rectTimer);
+      rectTimer = setTimeout(saveMiniRect, 400);
+    }).observe(box);
+  }
+
   playerEl.addEventListener("click", (e) => {
-    if (e.target === playerEl || e.target.closest("[data-close]")) closePlayer();
+    if (e.target.closest("[data-close]")) { closePlayer(); return; }
+    if (e.target.closest("[data-mini]")) { toggleMini(); return; }
+    if (e.target === playerEl) closePlayer();      // 点大窗的黑色遮罩关掉
   });
   document.addEventListener("keydown", playerKeys);
 }
+
+/* 小窗的位置和大小 */
+function applyMiniRect() {
+  const box = playerEl && playerEl.querySelector(".player-box");
+  if (!box) return;
+  let r = null;
+  try { r = JSON.parse(localStorage.getItem("player_mini_rect") || "null"); } catch (e) {}
+  const w = Math.min(Math.max((r && r.w) || 420, 260), Math.max(260, innerWidth - 24));
+  const h = Math.min(Math.max((r && r.h) || 300, 150), Math.max(150, innerHeight - 24));
+  const x = r && r.x != null ? Math.min(Math.max(r.x, 0), Math.max(0, innerWidth - w)) : innerWidth - w - 24;
+  const y = r && r.y != null ? Math.min(Math.max(r.y, 0), Math.max(0, innerHeight - h)) : innerHeight - h - 24;
+  box.style.width = w + "px";
+  box.style.height = h + "px";
+  box.style.left = x + "px";
+  box.style.top = y + "px";
+}
+function saveMiniRect() {
+  const box = playerEl && playerEl.querySelector(".player-box");
+  if (!box || !playerEl.classList.contains("mini")) return;
+  const r = box.getBoundingClientRect();
+  try {
+    localStorage.setItem("player_mini_rect", JSON.stringify({
+      x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height),
+    }));
+  } catch (e) {}
+}
+function onDrag(e) {
+  const box = playerEl && playerEl.querySelector(".player-box");
+  if (!box || !dragState) return;
+  const w = box.offsetWidth, h = box.offsetHeight;
+  const x = Math.min(Math.max(e.clientX - dragState.dx, 0), Math.max(0, innerWidth - w));
+  const y = Math.min(Math.max(e.clientY - dragState.dy, 0), Math.max(0, innerHeight - h));
+  box.style.left = x + "px";
+  box.style.top = y + "px";
+}
+function endDrag() {
+  document.removeEventListener("mousemove", onDrag);
+  document.removeEventListener("mouseup", endDrag);
+  dragState = null;
+  saveMiniRect();
+}
+
+function toggleMini() {
+  if (!playerEl) return;
+  const box = playerEl.querySelector(".player-box");
+  const mini = !playerEl.classList.contains("mini");
+  playerEl.classList.toggle("mini", mini);
+  localStorage.setItem("player_mini", mini ? "1" : "0");
+  document.body.style.overflow = mini ? "" : "hidden";
+  const btn = playerEl.querySelector("[data-mini]");
+  if (btn) btn.textContent = mini ? "放大" : "小窗";
+  if (mini) {
+    applyMiniRect();
+  } else {
+    box.style.cssText = "";                       // 回到大窗，清掉小窗留下的位置与尺寸
+  }
+}
+
+function syncRate() {
+  if (!playerEl) return;
+  const v = playerEl.querySelector("video"), s = playerEl.querySelector(".rate");
+  if (v && s) s.value = String(v.playbackRate);
+}
+function nudgeRate(step) {
+  const v = playerEl && playerEl.querySelector("video");
+  if (!v) return;
+  let i = PLAY_RATES.indexOf(v.playbackRate);
+  if (i < 0) i = PLAY_RATES.indexOf(1);
+  i = Math.min(PLAY_RATES.length - 1, Math.max(0, i + step));
+  v.playbackRate = PLAY_RATES[i];
+  syncRate();
+  toast(`播放速度 ${PLAY_RATES[i]}×`);
+}
+
 function playerKeys(e) {
   const v = playerEl && playerEl.querySelector("video");
   if (!v) return;
-  if (e.code === "Space" || e.key === " ") {      // 空格：暂停 / 继续
+  const t = e.target;
+  if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) return;
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  if (e.code === "Space") {                        // 空格：暂停 / 继续
     e.preventDefault();
     if (v.paused) v.play().catch(() => {}); else v.pause();
+  } else if (e.code === "KeyA") {                  // A：慢一档
+    e.preventDefault(); nudgeRate(-1);
+  } else if (e.code === "KeyD") {                  // D：快一档
+    e.preventDefault(); nudgeRate(1);
+  } else if (e.code === "KeyS") {                  // S：回到 1 倍
+    e.preventDefault(); v.playbackRate = 1; syncRate(); toast("播放速度 1×");
   } else if (e.key === "Enter") {                  // 回车：全屏切换
     e.preventDefault();
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
@@ -521,14 +685,21 @@ function playerKeys(e) {
     closePlayer();
   }
 }
+
 function closePlayer() {
   if (!playerEl) return;
   const v = playerEl.querySelector("video");
+  savePos(v, playerEl.dataset.url);                // 关之前先记下看到哪
   if (v) { v.pause(); v.removeAttribute("src"); v.load(); }  // 断开连接，别在后台继续拉流
+  saveMiniRect();
   playerEl.remove();
   playerEl = null;
+  posMark = 0;
   document.body.style.overflow = "";
   document.removeEventListener("keydown", playerKeys);
+  document.removeEventListener("mousemove", onDrag);
+  document.removeEventListener("mouseup", endDrag);
+  dragState = null;
 }
 
 document.addEventListener("click", (e) => {
