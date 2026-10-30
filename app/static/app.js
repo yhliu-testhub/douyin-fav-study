@@ -108,8 +108,10 @@ async function refreshState() {
   const parts = [];
   if (w.busy) parts.push(pg.item_id ? `${pg.stage_label} ${pg.pct}% · ${fmtEta(pg.eta)}` : (w.stage || "处理中…"));
   if (dp.item_id) parts.push(`精读 ${dp.pct || 0}% · ${fmtEta(dp.eta)}`);
-  sf.className = "side-foot" + (parts.length ? " busy" : "");
-  sf.textContent = parts.join("\n") || `就绪 · v${STATE.version || ""}`;
+  const busyText = parts.join("\n");
+  sf.className = "side-foot" + (busyText ? " busy" : "");
+  sf.hidden = !busyText;            // 空闲时整块收起，不显示“就绪 · v1.0.2”
+  sf.textContent = busyText;
   renderNavFolders();
   return STATE;
 }
@@ -125,12 +127,12 @@ function renderNavFolders() {
   const un = STATE.unclassified || 0;
   el.innerHTML = `
     <div class="fhead"><span>文件夹</span><button class="icon sm" id="newFolderBtn" title="新建文件夹">＋</button></div>
-    <a class="fitem ${libFilter.folder === "none" ? "on" : ""}" href="#/library/u" data-fid="none"
+    <a class="fitem ${libFilter.folder === "none" ? "on" : ""}" data-go="#/library/u" data-fid="none"
        title="AI 没拿准的都会先放这里">
       <i class="dot" style="background:var(--ink-4)"></i><span class="fname">待分类</span><span class="fcount">${un}</span>
     </a>
     ${fs.map((f) => `
-      <a class="fitem ${String(libFilter.folder) === String(f.id) ? "on" : ""}" href="#/library/f/${f.id}"
+      <a class="fitem ${String(libFilter.folder) === String(f.id) ? "on" : ""}" data-go="#/library/f/${f.id}"
          data-fid="${f.id}" draggable="true" title="${esc(f.name)}">
         <i class="dot cat-${catColor(f.name)}"></i><span class="fname" title="双击可改名">${esc(f.name)}</span>
         ${f.unread ? `<i class="ndot" title="有新笔记"></i>` : ""}
@@ -703,6 +705,9 @@ function closePlayer() {
 }
 
 document.addEventListener("click", (e) => {
+  // 侧栏导航不用 <a href>，避免鼠标悬停时浏览器左下角弹出完整网址
+  const go = e.target.closest && e.target.closest("[data-go]");
+  if (go) { e.preventDefault(); location.hash = go.dataset.go; return; }
   const on = e.target.closest && e.target.closest("[data-play]");
   if (on) { e.preventDefault(); e.stopPropagation(); openPlayer(on.dataset.play, on.dataset.title || "", on.dataset.id || ""); return; }
   const loc = e.target.closest && e.target.closest("[data-loc-video]");
@@ -821,7 +826,6 @@ async function renderItem(id, tab) {
   const n = it.note || {};
   const folders = STATE.folders || [];
   const [stText, stCls] = STATUS[it.status] || [it.status, "gray"];
-  const isNote = it.media_type === "note";
   const tabs = [["script", "逐字稿"], ["summary", "总结稿"], ["mindmap", "思维导图"]];
   const srcLink = it.url
     ? `<a class="src-link" href="${esc(it.url)}" target="_blank" rel="noopener">${ico("external", "ic sm")}${esc(prettyUrl(it.url))}</a>`
@@ -832,7 +836,10 @@ async function renderItem(id, tab) {
       <div class="head-row">
         <h1>${esc(n.title || it.title || "未命名")}</h1>
         <div class="head-actions">
-          ${it.url ? `<a class="btn sm" href="${esc(it.url)}" target="_blank" rel="noopener">${isNote ? ico("external") + "原图文" : ico("play") + "原视频"}</a>` : ""}
+          ${it.has_video
+            ? `<button class="btn sm" data-play="${esc(it.video_url)}" data-title="${esc(n.title || it.title || "")}" data-id="${it.id}">${ico("play")}播放视频</button>`
+            : `<button class="btn sm off" data-play-off="${esc(noVideoWhy(it))}" title="${esc(noVideoWhy(it))}">${ico("play")}播放视频</button>`}
+          ${it.url ? `<a class="btn sm" href="${esc(it.url)}" target="_blank" rel="noopener">${ico("external")}打开链接</a>` : ""}
           <button class="btn sm" id="starBtn">${it.starred ? ico("starFill", "ic star-ic") + "已星标" : ico("star") + "星标"}</button>
         </div>
       </div>
